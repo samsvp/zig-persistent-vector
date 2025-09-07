@@ -6,10 +6,12 @@ pub fn Vector(comptime T: type) type {
         nodes: Node,
         ref_count: usize = 1,
 
-        const node_size = 2;
+        const bits = 1;
+        const width = 1 << bits;
+        const mask = width - 1;
 
         const Node = union(enum) {
-            node: [node_size]*Self,
+            node: [width]*Self,
             leaf: []const T,
         };
 
@@ -29,16 +31,16 @@ pub fn Vector(comptime T: type) type {
         ) !*Self {
             const self = try gpa.create(Self);
             const len = data.len;
-            const remainder = data.len % node_size;
+            const remainder = data.len % width;
 
             if (depth == current_depth) {
-                const start_index = bucket_index * node_size;
-                const end_index = if (len / node_size != bucket_index)
-                    start_index + node_size
+                const start_index = bucket_index * width;
+                const end_index = if (len / width != bucket_index)
+                    start_index + width
                 else
-                    start_index + node_size - remainder;
+                    start_index + width - remainder;
 
-                const owned_data = try gpa.alloc(T, node_size);
+                const owned_data = try gpa.alloc(T, width);
                 @memcpy(owned_data[0 .. end_index - start_index], data[start_index..end_index]);
 
                 self.* = Self{
@@ -49,10 +51,10 @@ pub fn Vector(comptime T: type) type {
             }
 
             var placeholder = empty;
-            var nodes = [_]*Self{&placeholder} ** node_size;
-            for (0..node_size) |i| {
-                const new_bucket_index = bucket_index + i * std.math.pow(usize, node_size, depth - current_depth - 1);
-                if (new_bucket_index >= len / node_size + remainder) {
+            var nodes = [_]*Self{&placeholder} ** width;
+            for (0..width) |i| {
+                const new_bucket_index = bucket_index + i * std.math.pow(usize, width, depth - current_depth - 1);
+                if (new_bucket_index >= len / width + remainder) {
                     break;
                 }
                 nodes[i] = try _init(gpa, data, new_bucket_index, depth, current_depth + 1);
@@ -67,7 +69,7 @@ pub fn Vector(comptime T: type) type {
         }
 
         pub fn init(gpa: std.mem.Allocator, data: []const T) !*Self {
-            const depth = std.math.log(usize, node_size, data.len);
+            const depth = std.math.log(usize, width, data.len);
             return _init(gpa, data, 0, depth, 0);
         }
 
@@ -89,18 +91,15 @@ pub fn Vector(comptime T: type) type {
         }
 
         pub fn get(self: Self, i: usize) T {
-            const depth = std.math.log(usize, node_size, self.len);
-            const r_depth = std.math.pow(usize, node_size, depth);
-
             var node = self;
-            var d: i32 = 0;
-            var curr_size = r_depth;
-            while (curr_size > 1) : (curr_size /= node_size) {
-                node = node.nodes.node[(i / curr_size) % node_size].*;
-                d += 1;
+            const depth = std.math.log(usize, width, self.len);
+
+            var level: u6 = @intCast(bits * depth);
+            while (level > 0) : (level -= bits) {
+                node = node.nodes.node[(i >> level) & mask].*;
             }
 
-            return node.nodes.leaf[i % node_size];
+            return node.nodes.leaf[i % width];
         }
     };
 }
