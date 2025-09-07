@@ -22,7 +22,15 @@ test "update" {
         try std.testing.expect(v == data[i]);
     }
 
-    try std.testing.expect(new_vec.get(3) == 15);
+    for (0..data.len) |i| {
+        const v = new_vec.get(i);
+        if (i != 3)
+            try std.testing.expect(v == data[i])
+        else
+            try std.testing.expect(v == 15);
+    }
+
+    try std.testing.expect(vector.get(3) != new_vec.get(3));
 }
 
 test "basic add functionality" {
