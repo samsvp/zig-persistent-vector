@@ -11,7 +11,7 @@ pub fn Vector(comptime T: type) type {
         const mask = width - 1;
 
         const Node = union(enum) {
-            node: [width]?*Self,
+            branch: [width]?*Self,
             leaf: [width]T,
         };
 
@@ -57,7 +57,7 @@ pub fn Vector(comptime T: type) type {
             }
 
             self.* = Self{
-                .nodes = .{ .node = nodes },
+                .nodes = .{ .branch = nodes },
                 .depth = depth - current_depth,
             };
 
@@ -76,7 +76,7 @@ pub fn Vector(comptime T: type) type {
 
             self.ref_count -= 1;
             switch (self.nodes) {
-                .node => |ns| for (ns) |maybe_n| if (maybe_n) |n| n.deinit(gpa),
+                .branch => |ns| for (ns) |maybe_n| if (maybe_n) |n| n.deinit(gpa),
                 .leaf => {},
             }
             gpa.destroy(self);
@@ -87,7 +87,7 @@ pub fn Vector(comptime T: type) type {
 
             var level: u6 = @intCast(bits * self.depth);
             while (level > 0) : (level -= bits) {
-                node = node.nodes.node[(i >> level) & mask].?.*;
+                node = node.nodes.branch[(i >> level) & mask].?.*;
             }
 
             return node.nodes.leaf[i % width];
@@ -118,11 +118,11 @@ pub fn Vector(comptime T: type) type {
                         .depth = node.depth,
                         .nodes = node.nodes,
                     };
-                    r_node.nodes.node[w] = new_node;
+                    r_node.nodes.branch[w] = new_node;
                 }
 
-                node = node.nodes.node[target_idx].?;
-                r_node = r_node.nodes.node[target_idx].?;
+                node = node.nodes.branch[target_idx].?;
+                r_node = r_node.nodes.branch[target_idx].?;
             }
 
             r_node.nodes = node.nodes;
