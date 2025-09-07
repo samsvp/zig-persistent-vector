@@ -75,10 +75,6 @@ pub fn Vector(comptime T: type) type {
             }
 
             self.ref_count -= 1;
-            if (self.ref_count > 0) {
-                return;
-            }
-
             switch (self.nodes) {
                 .node => |ns| for (ns) |maybe_n| if (maybe_n) |n| n.deinit(gpa),
                 .leaf => {},
