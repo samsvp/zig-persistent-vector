@@ -6,7 +6,7 @@ pub fn Vector(comptime T: type) type {
         depth: usize,
         ref_count: usize = 1,
 
-        const bits = 5;
+        const bits = 1;
         const width = 1 << bits;
         const mask = width - 1;
 
@@ -95,6 +95,64 @@ pub fn Vector(comptime T: type) type {
             }
 
             return node.nodes.leaf[i % width];
+        }
+
+        pub fn update(self: *Self, gpa: std.mem.Allocator, i: usize, value: T) !*Self {
+            const root = try gpa.create(Self);
+            root.* = Self{
+                .depth = self.depth,
+                .nodes = .{ .node = [_]?*Self{null} ** width },
+            };
+
+            var r_node = root;
+            var node = self;
+            var level: u6 = @intCast(bits * self.depth);
+            while (level > 0) : (level -= bits) {
+                const target_idx = (i >> level) & mask;
+                r_node.nodes = switch (node.nodes) {
+                    .node => .{ .node = [_]?*Self{null} ** width },
+                    .leaf => .{ .leaf = undefined },
+                };
+                for (0..width) |w| {
+                    if (w == target_idx) {
+                        const n = try gpa.create(Self);
+                        var new_nodes: Node = undefined;
+                        switch (node.nodes) {
+                            .leaf => |leaf| {
+                                new_nodes = Node{ .leaf = undefined };
+                                for (0..leaf.len) |idx| {
+                                    new_nodes.leaf[idx] = leaf[idx];
+                                }
+                            },
+                            .node => |old_node| {
+                                new_nodes = Node{ .node = undefined };
+                                for (0..old_node.len) |idx| {
+                                    new_nodes.node[idx] = old_node[idx];
+                                }
+                            },
+                        }
+                        n.* = Self{
+                            .depth = node.depth,
+                            .nodes = new_nodes,
+                        };
+                        r_node.nodes.node[w] = n;
+
+                        continue;
+                    }
+
+                    switch (node.nodes) {
+                        .node => |n| r_node.nodes.node[w] = n[w],
+                        .leaf => |l| r_node.nodes.leaf[w] = l[w],
+                    }
+                    node.ref_count += 1;
+                }
+                node = node.nodes.node[target_idx].?;
+                r_node = r_node.nodes.node[target_idx].?;
+            }
+
+            r_node.nodes = node.nodes;
+            r_node.nodes.leaf[i % width] = value;
+            return root;
         }
     };
 }
