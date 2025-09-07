@@ -1,0 +1,30 @@
+const std = @import("std");
+const Vector = @import("vector.zig").Vector;
+
+test "basic add functionality" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 50, 100 };
+
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(i32, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            data[i] = rand.int(i32);
+        }
+
+        const vector = try Vector(i32).init(allocator, data);
+        for (0..data.len) |i| {
+            const v = vector.get(i);
+            try std.testing.expect(v == data[i]);
+        }
+    }
+}
