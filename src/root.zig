@@ -9,7 +9,7 @@ test "basic add functionality" {
     }
 
     const allocator = gpa.allocator();
-    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 50, 100 };
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 100, 255, 256, 257, 355, 480, 1000 };
 
     var prng = std.Random.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
