@@ -80,9 +80,12 @@ pub fn Vector(comptime T: type) type {
             self.ref_count -= 1;
             switch (self.nodes) {
                 .branch => |ns| for (ns) |maybe_n| if (maybe_n) |n| n.deinit(gpa),
-                .leaf => |l| gpa.free(l),
+                .leaf => {},
             }
             if (self.ref_count == 0) {
+                if (self.nodes == .leaf) {
+                    gpa.free(self.nodes.leaf);
+                }
                 gpa.destroy(self);
             }
         }
@@ -129,7 +132,7 @@ pub fn Vector(comptime T: type) type {
                         const nodes = if (level - bits > 0)
                             Node{ .branch = [_]?*Self{null} ** width }
                         else
-                            Node{ .leaf = undefined };
+                            Node{ .leaf = try gpa.alloc(T, width) };
 
                         new_node.* = Self{
                             .nodes = nodes,
@@ -152,7 +155,10 @@ pub fn Vector(comptime T: type) type {
                 r_node = r_node.nodes.branch[target_idx].?;
             }
 
-            r_node.nodes = node.nodes;
+            r_node.nodes = Node{ .leaf = try gpa.alloc(T, width) };
+            for (0..width) |w| {
+                r_node.nodes.leaf[w] = node.nodes.leaf[w];
+            }
             r_node.nodes.leaf[i % width] = value;
             return root;
         }

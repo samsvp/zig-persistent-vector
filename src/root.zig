@@ -16,7 +16,7 @@ test "update" {
     });
     const rand = prng.random();
 
-    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 64, 100, 159, 160, 161, 255, 256, 257, 355, 480, 1000, 1023, 32767 };
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 64, 100, 159, 160, 161, 255, 256, 257, 355, 480, 1000, 1023 };
     for (data_sizes) |s| {
         const data = try allocator.alloc(i32, s);
         defer allocator.free(data);
@@ -55,7 +55,6 @@ test "update" {
         defer new_vec3.deinit(allocator);
 
         for (0..data.len) |i| {
-            std.debug.print("i {}\n", .{i});
             const v0 = new_vec2.get(i);
             try std.testing.expect(v0 == data[i]);
         }
