@@ -13,7 +13,7 @@ pub fn Vector(comptime T: type) type {
 
         const Node = union(enum) {
             branch: [width]?*Self,
-            leaf: [width]T,
+            leaf: []T,
         };
 
         const Self = @This();
@@ -36,7 +36,7 @@ pub fn Vector(comptime T: type) type {
                 else
                     start_index + remainder;
 
-                var owned_data: [width]T = undefined;
+                var owned_data = try gpa.alloc(T, width);
                 for (start_index..end_index) |i| {
                     owned_data[i - start_index] = data[i];
                 }
@@ -80,7 +80,7 @@ pub fn Vector(comptime T: type) type {
             self.ref_count -= 1;
             switch (self.nodes) {
                 .branch => |ns| for (ns) |maybe_n| if (maybe_n) |n| n.deinit(gpa),
-                .leaf => {},
+                .leaf => |l| gpa.free(l),
             }
             if (self.ref_count == 0) {
                 gpa.destroy(self);
