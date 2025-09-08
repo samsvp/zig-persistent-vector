@@ -82,7 +82,9 @@ pub fn Vector(comptime T: type) type {
                 .branch => |ns| for (ns) |maybe_n| if (maybe_n) |n| n.deinit(gpa),
                 .leaf => {},
             }
-            gpa.destroy(self);
+            if (self.ref_count == 0) {
+                gpa.destroy(self);
+            }
         }
 
         pub fn get(self: Self, i: usize) T {
@@ -96,6 +98,8 @@ pub fn Vector(comptime T: type) type {
             return node.nodes.leaf[i % width];
         }
 
+        /// Returns a new vector with the passed value at index i. If i == self.len and the depth of the trie
+        /// does not need to increase, then the value is added to the end of the new collection.
         pub fn update(self: *Self, gpa: std.mem.Allocator, i: usize, value: T) !*Self {
             const root = try gpa.create(Self);
             root.* = Self{
@@ -117,6 +121,7 @@ pub fn Vector(comptime T: type) type {
                         continue;
                     }
 
+                    // create new node if target node is null
                     if (node.nodes.branch[target_idx] == null) {
                         const leaf = try gpa.create(Self);
                         leaf.* = Self{
@@ -150,7 +155,18 @@ pub fn Vector(comptime T: type) type {
             if (self.len < std.math.pow(usize, width, self.depth + 1)) {
                 return self.update(gpa, self.len, value);
             }
-            return error.NotImplementd;
+
+            var nodes = [_]?*Self{null} ** width;
+            nodes[0] = self;
+
+            var root = Self{
+                .nodes = .{ .branch = nodes },
+                .depth = self.depth + 1,
+                .len = self.len + 1,
+            };
+            defer root.deinit(gpa);
+
+            return root.update(gpa, self.len, value);
         }
     };
 }
