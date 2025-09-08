@@ -9,7 +9,16 @@ test "update" {
     }
 
     const allocator = gpa.allocator();
-    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+    var data = [_]i32{0} ** (Vector(i32).width - 1);
+    for (0..data.len) |i| {
+        data[i] = rand.int(i32);
+    }
 
     var vector = try Vector(i32).init(allocator, &data);
     defer vector.deinit(allocator);
@@ -31,6 +40,21 @@ test "update" {
     }
 
     try std.testing.expect(vector.get(3) != new_vec.get(3));
+
+    var new_vec2 = try vector.append(allocator, 20);
+    defer new_vec2.deinit(allocator);
+
+    var new_vec3 = try vector.append(allocator, 40);
+    defer new_vec3.deinit(allocator);
+
+    try std.testing.expect(new_vec2.get(new_vec2.len - 1) == 20);
+    try std.testing.expect(new_vec3.get(new_vec3.len - 1) == 40);
+
+    var new_vec4 = try new_vec2.append(allocator, 21);
+    defer new_vec4.deinit(allocator);
+
+    try std.testing.expect(new_vec4.get(new_vec2.len - 1) == 20);
+    try std.testing.expect(new_vec4.get(new_vec4.len - 1) == 21);
 }
 
 test "basic add functionality" {

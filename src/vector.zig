@@ -2,12 +2,13 @@ const std = @import("std");
 
 pub fn Vector(comptime T: type) type {
     return struct {
+        len: usize,
         nodes: Node,
         depth: usize,
         ref_count: usize = 1,
 
-        const bits = 1;
-        const width = 1 << bits;
+        pub const bits = 5;
+        pub const width = 1 << bits;
         const mask = width - 1;
 
         const Node = union(enum) {
@@ -43,6 +44,7 @@ pub fn Vector(comptime T: type) type {
                 self.* = Self{
                     .nodes = .{ .leaf = owned_data },
                     .depth = depth - current_depth,
+                    .len = data.len,
                 };
                 return self;
             }
@@ -59,6 +61,7 @@ pub fn Vector(comptime T: type) type {
             self.* = Self{
                 .nodes = .{ .branch = nodes },
                 .depth = depth - current_depth,
+                .len = data.len,
             };
 
             return self;
@@ -98,6 +101,7 @@ pub fn Vector(comptime T: type) type {
             root.* = Self{
                 .depth = self.depth,
                 .nodes = undefined,
+                .len = if (i == self.len) self.len + 1 else self.len,
             };
 
             var r_node = root;
@@ -113,10 +117,21 @@ pub fn Vector(comptime T: type) type {
                         continue;
                     }
 
+                    if (node.nodes.branch[target_idx] == null) {
+                        const leaf = try gpa.create(Self);
+                        leaf.* = Self{
+                            .nodes = .{ .leaf = undefined },
+                            .depth = 0,
+                            .len = self.len + 1,
+                        };
+                        node.nodes.branch[target_idx] = leaf;
+                    }
+
                     const new_node = try gpa.create(Self);
                     new_node.* = Self{
                         .depth = node.depth,
                         .nodes = node.nodes,
+                        .len = root.len,
                     };
                     r_node.nodes.branch[w] = new_node;
                 }
@@ -128,6 +143,14 @@ pub fn Vector(comptime T: type) type {
             r_node.nodes = node.nodes;
             r_node.nodes.leaf[i % width] = value;
             return root;
+        }
+
+        pub fn append(self: *Self, gpa: std.mem.Allocator, value: T) !*Self {
+            // check if we need a new node
+            if (self.len < std.math.pow(usize, width, self.depth + 1)) {
+                return self.update(gpa, self.len, value);
+            }
+            return error.NotImplementd;
         }
     };
 }
