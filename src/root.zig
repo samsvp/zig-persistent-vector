@@ -16,7 +16,7 @@ test "update" {
     });
     const rand = prng.random();
 
-    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 100, 255, 256, 257, 355, 480, 1000 };
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 64, 100, 159, 160, 161, 255, 256, 257, 355, 480, 1000, 1023, 1024 };
     for (data_sizes) |s| {
         const data = try allocator.alloc(i32, s);
         defer allocator.free(data);
@@ -26,7 +26,7 @@ test "update" {
         }
         var vector = try Vector(i32).init(allocator, data);
 
-        const update_idx = rand.intRangeAtMost(usize, 0, data.len);
+        const update_idx = rand.intRangeAtMost(usize, 0, data.len - 1);
         const new_val = rand.int(i32);
 
         var new_vec = try vector.update(allocator, update_idx, new_val);
@@ -49,10 +49,10 @@ test "update" {
         var new_vec2 = try vector.append(allocator, new_val2);
         defer new_vec2.deinit(allocator);
 
+        vector.deinit(allocator);
+
         var new_vec3 = try vector.append(allocator, new_val3);
         defer new_vec3.deinit(allocator);
-
-        vector.deinit(allocator);
 
         for (0..data.len) |i| {
             const v0 = new_vec2.get(i);

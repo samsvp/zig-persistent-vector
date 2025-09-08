@@ -117,27 +117,34 @@ pub fn Vector(comptime T: type) type {
                 const target_idx = (i >> level) & mask;
                 for (0..width) |w| {
                     if (w != target_idx) {
-                        node.ref_count += 1;
+                        if (node != self) {
+                            node.ref_count += 1;
+                        }
                         continue;
                     }
 
+                    const new_node = try gpa.create(Self);
                     // create new node if target node is null
                     if (node.nodes.branch[target_idx] == null) {
-                        const leaf = try gpa.create(Self);
-                        leaf.* = Self{
-                            .nodes = .{ .leaf = undefined },
+                        const nodes = if (level - bits > 0)
+                            Node{ .branch = [_]?*Self{null} ** width }
+                        else
+                            Node{ .leaf = undefined };
+
+                        new_node.* = Self{
+                            .nodes = nodes,
                             .depth = 0,
                             .len = self.len + 1,
                         };
-                        node.nodes.branch[target_idx] = leaf;
+                        node.nodes.branch[target_idx] = new_node;
+                    } else {
+                        new_node.* = Self{
+                            .depth = node.depth,
+                            .nodes = node.nodes,
+                            .len = root.len,
+                        };
                     }
 
-                    const new_node = try gpa.create(Self);
-                    new_node.* = Self{
-                        .depth = node.depth,
-                        .nodes = node.nodes,
-                        .len = root.len,
-                    };
                     r_node.nodes.branch[w] = new_node;
                 }
 
@@ -158,13 +165,13 @@ pub fn Vector(comptime T: type) type {
 
             var nodes = [_]?*Self{null} ** width;
             nodes[0] = self;
+            self.ref_count += 1;
 
             var root = Self{
                 .nodes = .{ .branch = nodes },
                 .depth = self.depth + 1,
-                .len = self.len + 1,
+                .len = self.len,
             };
-            defer root.deinit(gpa);
 
             return root.update(gpa, self.len, value);
         }
