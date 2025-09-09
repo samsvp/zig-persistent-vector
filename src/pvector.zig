@@ -169,8 +169,9 @@ pub fn PVector(comptime T: type) type {
             };
 
             var level: u6 = @intCast(bits * self.depth);
+            var branch_idx = (i >> level) & mask;
             while (level > 0) : (level -= bits) {
-                const branch_idx = (i >> level) & mask;
+                branch_idx = (i >> level) & mask;
 
                 for (0..width) |w| {
                     const node = nodes[w];
@@ -190,9 +191,12 @@ pub fn PVector(comptime T: type) type {
                     nodes[w] = new_node_ptr;
                 }
 
-                nodes = nodes[branch_idx].?.getUnwrap();
+                const node = nodes[branch_idx].?.getUnwrap();
+                if (node.kind == .branch) {
+                    nodes = node.kind.branch;
+                }
             }
-            const new_leaf = nodes[].kind.leaf.getUnwrap().update(gpa, i, value);
+            const new_leaf = nodes[branch_idx].?.getUnwrap().kind.leaf.getUnwrap().update(gpa, i, value);
             node.kind = .{ .leaf = Leaf.init(gpa, new_leaf) };
             return new_self;
         }
