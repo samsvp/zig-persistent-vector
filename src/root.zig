@@ -56,7 +56,6 @@ test "update" {
         }
 
         var vector = try PVector(i32).init(allocator, data);
-        defer vector.deinit(allocator);
 
         const update_idx = rand.intRangeAtMost(usize, 0, data.len - 1);
         const new_val = rand.int(i32);
@@ -69,10 +68,16 @@ test "update" {
             try std.testing.expect(v0 == data[i]);
 
             const v1 = new_vec.get(i);
-            if (i != update_idx)
-                try std.testing.expect(v1 == data[i])
-            else
-                try std.testing.expect(v1 == new_val);
+            const ground_truth = if (i != update_idx) data[i] else new_val;
+            try std.testing.expect(v1 == ground_truth);
+        }
+
+        vector.deinit(allocator);
+
+        for (0..data.len) |i| {
+            const v1 = new_vec.get(i);
+            const ground_truth = if (i != update_idx) data[i] else new_val;
+            try std.testing.expect(v1 == ground_truth);
         }
     }
 }
