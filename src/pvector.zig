@@ -93,11 +93,7 @@ pub fn PVector(comptime T: type) type {
             };
         }
 
-        fn newBranch() Branch {
-            return [_]RefCounter(*Node).Ref{undefined} ** width;
-        }
-
-        pub fn getLeaf(self: Self, i: usize) Leaf {
+        pub fn get(self: Self, i: usize) T {
             var node = self.node.getUnwrap();
 
             var level: u6 = @intCast(bits * self.depth);
@@ -105,21 +101,20 @@ pub fn PVector(comptime T: type) type {
                 node = node.kind.branch[(i >> level) & mask].getUnwrap();
             }
 
-            return node.kind.leaf;
-        }
-        pub fn get(self: Self, i: usize) T {
-            const leaf = self.getLeaf(i);
+            const leaf = node.kind.leaf;
             return leaf.getUnwrap().items[i % width];
         }
 
-        const RetClone = struct {
+        /// Copies the path to the leaf corresponding to the index i.
+        fn clonePath(
+            self: *Self,
+            gpa: std.mem.Allocator,
+            i: usize,
+        ) !struct {
             self: Self,
             tail_node: *Node,
             leaf: Leaf,
-        };
-
-        /// Copies the path to the leaf corresponding to the index i.
-        fn clonePath(self: *Self, gpa: std.mem.Allocator, i: usize) !RetClone {
+        } {
             var curr_node = try gpa.create(Node);
             const curr_node_ref = try RefCounter(*Node).init(gpa, curr_node);
 
@@ -208,6 +203,27 @@ pub fn PVector(comptime T: type) type {
             return clone.self;
         }
 
+        /// Appends the given value to the vector. Increases the vector depth if necessary.
+        pub fn append(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
+            // check if we need a new node
+            if (self.len < std.math.pow(usize, width, self.depth + 1)) {
+                return self.appendAssumeCapacity(gpa, value);
+            }
+
+            var root = Self{
+                .node = try self.grow(gpa, 0, 0),
+                .depth = self.depth + 1,
+                .len = self.len,
+            };
+            defer root.deinit(gpa);
+
+            return root.appendAssumeCapacity(gpa, value);
+        }
+
+        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+            self.node.release(gpa);
+        }
+
         /// Grows the current vector depth by 1.
         fn grow(
             self: *Self,
@@ -244,25 +260,8 @@ pub fn PVector(comptime T: type) type {
             return node_ref;
         }
 
-        /// Appends the given value to the vector. Increases the vector depth if necessary.
-        pub fn append(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
-            // check if we need a new node
-            if (self.len < std.math.pow(usize, width, self.depth + 1)) {
-                return self.appendAssumeCapacity(gpa, value);
-            }
-
-            var root = Self{
-                .node = try self.grow(gpa, 0, 0),
-                .depth = self.depth + 1,
-                .len = self.len,
-            };
-            defer root.deinit(gpa);
-
-            return root.appendAssumeCapacity(gpa, value);
-        }
-
-        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
-            self.node.release(gpa);
+        fn newBranch() Branch {
+            return [_]RefCounter(*Node).Ref{undefined} ** width;
         }
     };
 }
