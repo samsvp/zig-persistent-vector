@@ -31,6 +31,51 @@ test "ivector" {
     }
 }
 
+test "ivector append remove" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+
+    const vs = [_]i32{ 1, 2, 3, 4 };
+    var s = try IVector(i32).init(allocator, &vs);
+    defer s.deinit(allocator);
+
+    for (0..vs.len) |i| {
+        const val: i32 = @intCast(i);
+        var new_s = try s.append(allocator, val);
+        defer new_s.deinit(allocator);
+
+        try std.testing.expectEqual(4, s.items.len);
+
+        for (0..new_s.items.len) |j| {
+            const gt = if (j < vs.len) s.items[j] else val;
+            try std.testing.expectEqual(gt, new_s.items[j]);
+        }
+    }
+
+    for (0..vs.len) |i| {
+        var new_s = try s.remove(allocator, i);
+        defer new_s.deinit(allocator);
+
+        try std.testing.expectEqual(4, s.items.len);
+
+        var old_i: usize = 0;
+        for (0..new_s.items.len) |j| {
+            if (j == i) {
+                old_i += 1;
+            }
+
+            const gt = s.items[old_i];
+            try std.testing.expectEqual(gt, new_s.items[j]);
+            old_i += 1;
+        }
+    }
+}
+
 test "update" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer {

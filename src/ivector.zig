@@ -23,23 +23,23 @@ pub fn IVector(comptime T: type) type {
         }
 
         pub fn append(self: Self, gpa: std.mem.Allocator, val: T) !Self {
-            const items = try gpa.alloc(T, self.items.len);
+            const items = try gpa.alloc(T, self.items.len + 1);
             @memcpy(items[0..self.items.len], self.items);
             items[items.len - 1] = val;
             return .{ .items = items };
         }
 
         pub fn remove(self: Self, gpa: std.mem.Allocator, idx: usize) !Self {
-            const items = try gpa.alloc(T, self.items.len - 1);
+            var items = try gpa.alloc(T, self.items.len - 1);
 
-            var i = 0;
-            for (self.items) |item| {
-                defer i += 1;
+            var items_idx: usize = 0;
+            for (0..self.items.len) |i| {
                 if (i == idx) {
                     continue;
                 }
 
-                self.items[i] = item;
+                items[items_idx] = self.items[i];
+                items_idx += 1;
             }
 
             return .{ .items = items };
