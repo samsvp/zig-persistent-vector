@@ -170,8 +170,6 @@ test "append" {
         1023,
     };
     for (data_sizes) |s| {
-        std.debug.print("s {}\n", .{s});
-
         const data = try allocator.alloc(i32, s);
         defer allocator.free(data);
 
@@ -179,28 +177,32 @@ test "append" {
             data[i] = rand.int(i32);
         }
 
-        var vector = try PVector(i32).init(allocator, data);
-
-        const new_val = rand.int(i32);
-        var new_vec = try vector.appendAssumeCapacity(allocator, new_val);
+        var new_vec = try PVector(i32).init(allocator, data);
         defer new_vec.deinit(allocator);
 
-        for (0..data.len) |i| {
-            const v0 = vector.get(i);
-            try std.testing.expect(v0 == data[i]);
-
-            const v1 = new_vec.get(i);
-            const ground_truth = data[i];
-            try std.testing.expect(v1 == ground_truth);
+        var new_vals: [5]i32 = undefined;
+        for (0..5) |j| {
+            new_vals[j] = rand.int(i32);
+            const new_vec_tmp = try new_vec.append(allocator, new_vals[j]);
+            new_vec.deinit(allocator);
+            new_vec = new_vec_tmp;
         }
-
-        vector.deinit(allocator);
 
         for (0..data.len) |i| {
             const v1 = new_vec.get(i);
             const ground_truth = data[i];
             try std.testing.expect(v1 == ground_truth);
         }
-        try std.testing.expect(new_vec.get(s) == new_val);
+
+        for (0..data.len) |i| {
+            const v1 = new_vec.get(i);
+            const ground_truth = data[i];
+            try std.testing.expect(v1 == ground_truth);
+        }
+        for (0..new_vals.len) |j| {
+            const v1 = new_vec.get(s + j);
+            const gt = new_vals[j];
+            try std.testing.expect(v1 == gt);
+        }
     }
 }

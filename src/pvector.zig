@@ -230,6 +230,57 @@ pub fn PVector(comptime T: type) type {
             return new_self;
         }
 
+        pub fn _grow(
+            self: *Self,
+            gpa: std.mem.Allocator,
+            bucket_index: usize,
+            current_depth: usize,
+        ) !RefCounter(*Node).Ref {
+            const node_ptr = try gpa.create(Node);
+            const node_ref = try RefCounter(*Node).init(gpa, node_ptr);
+
+            if (self.depth + 1 == current_depth) {
+                const leaf = IVector(T).empty;
+
+                const leaf_ref = try RefCounter(IVector(T)).init(gpa, leaf);
+                node_ptr.* = Node{
+                    .kind = .{ .leaf = leaf_ref },
+                };
+                return node_ref;
+            }
+
+            var nodes = newBranch();
+            if (current_depth == 0) {
+                nodes[0] = try self.node.borrow();
+            }
+            const start_idx: usize = if (current_depth == 0) 1 else 0;
+            for (start_idx..width) |i| {
+                const new_bucket_index = bucket_index + i * std.math.pow(usize, width, self.depth - current_depth);
+                nodes[i] = try self._grow(gpa, new_bucket_index, current_depth + 1);
+            }
+
+            node_ptr.* = Node{
+                .kind = .{ .branch = nodes },
+            };
+            return node_ref;
+        }
+
+        pub fn append(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
+            // check if we need a new node
+            if (self.len < std.math.pow(usize, width, self.depth + 1)) {
+                return self.appendAssumeCapacity(gpa, value);
+            }
+
+            var root = Self{
+                .node = try self._grow(gpa, 0, 0),
+                .depth = self.depth + 1,
+                .len = self.len,
+            };
+            defer root.deinit(gpa);
+
+            return root.appendAssumeCapacity(gpa, value);
+        }
+
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             self.node.release(gpa);
         }
