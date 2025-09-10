@@ -8,7 +8,7 @@ pub fn PVector(comptime T: type) type {
         depth: usize,
         node: RefCounter(*Node).Ref,
 
-        pub const bits = 1;
+        pub const bits = 5;
         pub const width = 1 << bits;
         const mask = width - 1;
 
@@ -191,10 +191,7 @@ pub fn PVector(comptime T: type) type {
                 .kind = .{
                     .leaf = try Leaf.init(
                         gpa,
-                        try clone.leaf.getUnwrap().append(
-                            gpa,
-                            value,
-                        ),
+                        try clone.leaf.getUnwrap().append(gpa, value),
                     ),
                 },
             };
@@ -218,6 +215,23 @@ pub fn PVector(comptime T: type) type {
             defer root.deinit(gpa);
 
             return root.appendAssumeCapacity(gpa, value);
+        }
+
+        pub fn pop(self: *Self, gpa: std.mem.Allocator) !Self {
+            var clone = try self.clonePath(gpa, self.len - 1);
+
+            const leaf = clone.leaf.getUnwrap();
+            clone.tail_node.* = Node{
+                .kind = .{
+                    .leaf = try Leaf.init(
+                        gpa,
+                        try leaf.remove(gpa, leaf.items.len - 1),
+                    ),
+                },
+            };
+
+            clone.self.len -= 1;
+            return clone.self;
         }
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {

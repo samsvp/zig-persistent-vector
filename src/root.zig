@@ -168,6 +168,15 @@ test "append" {
         480,
         1000,
         1023,
+        2560,
+        32767,
+        32768,
+        32769,
+        32799,
+        32800,
+        32801,
+        32860,
+        50000,
     };
     for (data_sizes) |s| {
         const data = try allocator.alloc(i32, s);
@@ -194,15 +203,86 @@ test "append" {
             try std.testing.expect(v1 == ground_truth);
         }
 
-        for (0..data.len) |i| {
-            const v1 = new_vec.get(i);
-            const ground_truth = data[i];
-            try std.testing.expect(v1 == ground_truth);
-        }
         for (0..new_vals.len) |j| {
             const v1 = new_vec.get(s + j);
             const gt = new_vals[j];
             try std.testing.expect(v1 == gt);
         }
+        try std.testing.expectEqual(s + 5, new_vec.len);
+    }
+}
+
+test "remove" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const data_sizes = [_]usize{
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        31,
+        32,
+        33,
+        50,
+        64,
+        100,
+        159,
+        160,
+        161,
+        255,
+        256,
+        257,
+        355,
+        480,
+        1000,
+        1023,
+        2560,
+        32767,
+        32768,
+        32769,
+        32799,
+        32800,
+        32801,
+        32860,
+        50000,
+    };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(i32, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            data[i] = rand.int(i32);
+        }
+
+        var new_vec = try PVector(i32).init(allocator, data);
+        defer new_vec.deinit(allocator);
+
+        for (0..5) |_| {
+            const new_vec_tmp = try new_vec.pop(allocator);
+            new_vec.deinit(allocator);
+            new_vec = new_vec_tmp;
+        }
+
+        for (0..data.len - 5) |i| {
+            const v1 = new_vec.get(i);
+            const ground_truth = data[i];
+            try std.testing.expectEqual(v1, ground_truth);
+        }
+
+        try std.testing.expectEqual(s - 5, new_vec.len);
     }
 }
