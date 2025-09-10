@@ -8,7 +8,7 @@ pub fn PVector(comptime T: type) type {
         depth: usize,
         node: RefCounter(*Node).Ref,
 
-        pub const bits = 5;
+        pub const bits = 1;
         pub const width = 1 << bits;
         const mask = width - 1;
 
