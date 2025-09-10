@@ -112,9 +112,14 @@ pub fn PVector(comptime T: type) type {
             return leaf.getUnwrap().items[i % width];
         }
 
-        /// Returns a new vector with the passed value at index i. If i == self.len and the depth of the trie
-        /// does not need to increase, then the value is added to the end of the new collection.
-        pub fn update(self: *Self, gpa: std.mem.Allocator, i: usize, value: T) !Self {
+        const RetClone = struct {
+            self: Self,
+            tail_node: *Node,
+            leaf: Leaf,
+        };
+
+        /// Copies the path to the leaf corresponding to the index i.
+        fn clonePath(self: *Self, gpa: std.mem.Allocator, i: usize) !RetClone {
             var curr_node = try gpa.create(Node);
             const curr_node_ref = try RefCounter(*Node).init(gpa, curr_node);
 
@@ -156,12 +161,23 @@ pub fn PVector(comptime T: type) type {
                 curr_node.* = Node{ .kind = .{ .branch = nodes } };
             }
 
-            const leaf = self_curr_node.kind.leaf;
-            curr_node.* = Node{
+            return .{
+                .self = new_self,
+                .tail_node = curr_node,
+                .leaf = self_curr_node.kind.leaf,
+            };
+        }
+
+        /// Returns a new vector with the passed value at index i. If i == self.len and the depth of the trie
+        /// does not need to increase, then the value is added to the end of the new collection.
+        pub fn update(self: *Self, gpa: std.mem.Allocator, i: usize, value: T) !Self {
+            var clone = try self.clonePath(gpa, i);
+
+            clone.tail_node.* = Node{
                 .kind = .{
                     .leaf = try Leaf.init(
                         gpa,
-                        try leaf.getUnwrap().update(
+                        try clone.leaf.getUnwrap().update(
                             gpa,
                             i % width,
                             value,
@@ -169,68 +185,31 @@ pub fn PVector(comptime T: type) type {
                     ),
                 },
             };
-            return new_self;
+            return clone.self;
         }
 
+        /// Appends the given value to the vector. Assumes that some tail node has capacity to hold it.
         pub fn appendAssumeCapacity(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
-            var curr_node = try gpa.create(Node);
-            const curr_node_ref = try RefCounter(*Node).init(gpa, curr_node);
+            var clone = try self.clonePath(gpa, self.len);
 
-            const new_self = Self{
-                .node = curr_node_ref,
-                .depth = self.depth,
-                .len = self.len + 1,
-            };
-
-            var self_curr_node = self.node.getUnwrap();
-            curr_node.* = self_curr_node.*;
-
-            var level: u6 = @intCast(bits * self.depth);
-            const i = self.len;
-            var branch_idx = (i >> level) & mask;
-            while (curr_node.kind == .branch) : ({
-                curr_node = curr_node.kind.branch[branch_idx].getUnwrap();
-                self_curr_node = self_curr_node.kind.branch[branch_idx].getUnwrap();
-
-                level -= bits;
-                branch_idx = (i >> level) & mask;
-            }) {
-                var nodes = newBranch();
-                for (0..width) |w| {
-                    const branch = self_curr_node.kind.branch;
-                    var node = branch[w];
-                    if (w != branch_idx) {
-                        nodes[w] = try node.borrow();
-                        continue;
-                    }
-
-                    const new_node_ptr = try gpa.create(Node);
-                    const kind = switch (node.getUnwrap().kind) {
-                        .branch => NodeKind{ .branch = newBranch() },
-                        .leaf => |l| NodeKind{ .leaf = l },
-                    };
-                    new_node_ptr.* = Node{ .kind = kind };
-                    nodes[w] = try RefCounter(*Node).init(gpa, new_node_ptr);
-                }
-                curr_node.* = Node{ .kind = .{ .branch = nodes } };
-            }
-
-            const leaf = self_curr_node.kind.leaf;
-            curr_node.* = Node{
+            clone.tail_node.* = Node{
                 .kind = .{
                     .leaf = try Leaf.init(
                         gpa,
-                        try leaf.getUnwrap().append(
+                        try clone.leaf.getUnwrap().append(
                             gpa,
                             value,
                         ),
                     ),
                 },
             };
-            return new_self;
+
+            clone.self.len += 1;
+            return clone.self;
         }
 
-        pub fn _grow(
+        /// Grows the current vector depth by 1.
+        fn grow(
             self: *Self,
             gpa: std.mem.Allocator,
             bucket_index: usize,
@@ -256,7 +235,7 @@ pub fn PVector(comptime T: type) type {
             const start_idx: usize = if (current_depth == 0) 1 else 0;
             for (start_idx..width) |i| {
                 const new_bucket_index = bucket_index + i * std.math.pow(usize, width, self.depth - current_depth);
-                nodes[i] = try self._grow(gpa, new_bucket_index, current_depth + 1);
+                nodes[i] = try self.grow(gpa, new_bucket_index, current_depth + 1);
             }
 
             node_ptr.* = Node{
@@ -265,6 +244,7 @@ pub fn PVector(comptime T: type) type {
             return node_ref;
         }
 
+        /// Appends the given value to the vector. Increases the vector depth if necessary.
         pub fn append(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
             // check if we need a new node
             if (self.len < std.math.pow(usize, width, self.depth + 1)) {
@@ -272,7 +252,7 @@ pub fn PVector(comptime T: type) type {
             }
 
             var root = Self{
-                .node = try self._grow(gpa, 0, 0),
+                .node = try self.grow(gpa, 0, 0),
                 .depth = self.depth + 1,
                 .len = self.len,
             };
