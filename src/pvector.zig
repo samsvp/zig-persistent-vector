@@ -1,52 +1,6 @@
 const std = @import("std");
+const IVector = @import("ivector.zig").IVector;
 const RefCounter = @import("ref_counter.zig").RefCounter;
-
-
-pub fn IVector(comptime T:type) type {
-    return struct {
-        items: []const T,
-
-        const Self = @This();
-
-        pub fn init(gpa: std.mem.Allocator, items: []const T) !Self {
-            const owned_items = try gpa.dupe(T, items);
-            return .{ .items = owned_items };
-        }
-
-        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
-            gpa.free(self.items);
-        }
-
-        pub fn update(self: Self, gpa: std.mem.Allocator, i: usize, val: T) !Self {
-            var items = try gpa.dupe(T, self.items);
-            items[i] = val;
-            return .{ .items = items };
-        }
-
-        pub fn append(self: Self, gpa: std.mem.Allocator, val: T) !Self {
-            const items = try gpa.alloc(T, self.items.len);
-            @memcpy(items[0..self.items.len], self.items);
-            items[items.len-1] = val;
-            return .{ .items = items };
-        }
-
-        pub fn remove(self: Self, gpa: std.mem.Allocator, idx: usize) !Self {
-            const items = try gpa.alloc(T, self.items.len - 1);
-
-            var i = 0;
-            for (self.items) |item| {
-                defer i += 1;
-                if (i == idx) {
-                    continue;
-                }
-
-                self.items[i] = item;
-            }
-
-            return .{ .items = items };
-        }
-    };
-}
 
 pub fn PVector(comptime T: type) type {
     return struct {
@@ -139,7 +93,7 @@ pub fn PVector(comptime T: type) type {
             };
         }
 
-        fn getLeaf(self: Self, i: usize) Leaf {
+        pub fn getLeaf(self: Self, i: usize) Leaf {
             var node = self.node.getUnwrap();
 
             var level: u6 = @intCast(bits * self.depth);
@@ -147,57 +101,72 @@ pub fn PVector(comptime T: type) type {
                 node = node.kind.branch[(i >> level) & mask].?.getUnwrap();
             }
 
-            return node.kind.leaf.getUnwrap();
+            return node.kind.leaf;
         }
-
         pub fn get(self: Self, i: usize) T {
             const leaf = self.getLeaf(i);
-            return leaf.items[i % width];
+            return leaf.getUnwrap().items[i % width];
         }
 
         /// Returns a new vector with the passed value at index i. If i == self.len and the depth of the trie
         /// does not need to increase, then the value is added to the end of the new collection.
         pub fn update(self: *Self, gpa: std.mem.Allocator, i: usize, value: T) !Self {
-            const node_ptr = try gpa.create(Node);
-            const node_ref = try RefCounter(*Node).init(gpa, node_ptr);
+            var curr_node = try gpa.create(Node);
+            const curr_node_ref = try RefCounter(*Node).init(gpa, curr_node);
 
-            var nodes = [_]?RefCounter(*Node).Ref{null} ** width;
             const new_self = Self{
-                .node = nodes,
+                .node = curr_node_ref,
                 .depth = self.depth,
                 .len = self.len,
             };
 
             var level: u6 = @intCast(bits * self.depth);
             var branch_idx = (i >> level) & mask;
-            while (level > 0) : (level -= bits) {
-                branch_idx = (i >> level) & mask;
+            var self_curr_node = self.node.getUnwrap();
+            curr_node.* = self_curr_node.*;
+            while (curr_node.kind == .branch) : ({
+                curr_node = curr_node.kind.branch[branch_idx].?.getUnwrap();
+                self_curr_node = self_curr_node.kind.branch[branch_idx].?.getUnwrap();
 
+                level -= bits;
+                branch_idx = (i >> level) & mask;
+            }) {
+                var nodes = [_]?RefCounter(*Node).Ref{null} ** width;
                 for (0..width) |w| {
-                    const node = nodes[w];
+                    const branch = curr_node.kind.branch;
+                    var node = branch[w] orelse {
+                        nodes[w] = null;
+                        continue;
+                    };
                     if (w != branch_idx) {
-                        nodes[w] = if (node) |n| n.borrow() orelse null;
+                        nodes[w] = try node.borrow();
                         continue;
                     }
 
                     const new_node_ptr = try gpa.create(Node);
-                    const kind = switch (node.kind) {
-                        .branch => [_]?RefCounter(*Node).Ref{null} ** width,
-                        .leaf => |l| l,
+                    const kind = switch (node.getUnwrap().kind) {
+                        .branch => NodeKind{ .branch = [_]?RefCounter(*Node).Ref{null} ** width },
+                        .leaf => |l| NodeKind{ .leaf = l },
                     };
-                    new_node_ptr.* = Node{
-                        .kind = kind
-                    };
-                    nodes[w] = new_node_ptr;
+                    new_node_ptr.* = Node{ .kind = kind };
+                    nodes[w] = try RefCounter(*Node).init(gpa, new_node_ptr);
                 }
-
-                const node = nodes[branch_idx].?.getUnwrap();
-                if (node.kind == .branch) {
-                    nodes = node.kind.branch;
-                }
+                curr_node.* = Node{ .kind = .{ .branch = nodes } };
             }
-            const new_leaf = nodes[branch_idx].?.getUnwrap().kind.leaf.getUnwrap().update(gpa, i, value);
-            node.kind = .{ .leaf = Leaf.init(gpa, new_leaf) };
+
+            const leaf = self_curr_node.kind.leaf;
+            curr_node.* = Node{
+                .kind = .{
+                    .leaf = try Leaf.init(
+                        gpa,
+                        try leaf.getUnwrap().update(
+                            gpa,
+                            i % width,
+                            value,
+                        ),
+                    ),
+                },
+            };
             return new_self;
         }
 
