@@ -7,6 +7,8 @@ pub fn IVector(comptime T: type) type {
 
         const Self = @This();
 
+        pub const empty = Self{ .items = &[_]T{} };
+
         pub fn init(gpa: std.mem.Allocator, items: []const T) !Self {
             const owned_items = try gpa.dupe(T, items);
             return .{ .items = owned_items };

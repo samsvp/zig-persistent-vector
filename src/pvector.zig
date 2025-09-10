@@ -14,7 +14,7 @@ pub fn PVector(comptime T: type) type {
 
         const Self = @This();
         const Leaf = RefCounter(IVector(T)).Ref;
-        const Branch = [width]?RefCounter(*Node).Ref;
+        const Branch = [width]RefCounter(*Node).Ref;
 
         const Node = struct {
             kind: NodeKind,
@@ -31,7 +31,7 @@ pub fn PVector(comptime T: type) type {
 
             pub fn deinit(self: *NodeKind, gpa: std.mem.Allocator) void {
                 switch (self.*) {
-                    .branch => |*brs| for (0..brs.len) |i| if (brs[i]) |*b| b.release(gpa),
+                    .branch => |*brs| for (0..brs.len) |i| brs[i].release(gpa),
                     .leaf => |*l| l.release(gpa),
                 }
             }
@@ -52,16 +52,19 @@ pub fn PVector(comptime T: type) type {
 
             if (depth == current_depth) {
                 const start_index = bucket_index * width;
-                const end_index = if (len / width != bucket_index)
+
+                const end_index = if (len / width > bucket_index)
                     start_index + width
+                else if (len / width < bucket_index)
+                    start_index
                 else
                     start_index + remainder;
 
-                var owned_data: [width]T = undefined;
-                for (start_index..end_index) |i| {
-                    owned_data[i - start_index] = data[i];
-                }
-                const leaf = try IVector(T).init(gpa, &owned_data);
+                const leaf = if (start_index < len)
+                    try IVector(T).init(gpa, data[start_index..end_index])
+                else
+                    IVector(T).empty;
+
                 const leaf_ref = try RefCounter(IVector(T)).init(gpa, leaf);
                 node_ptr.* = Node{
                     .kind = .{ .leaf = leaf_ref },
@@ -69,12 +72,9 @@ pub fn PVector(comptime T: type) type {
                 return node_ref;
             }
 
-            var nodes = [_]?RefCounter(*Node).Ref{null} ** width;
+            var nodes = newBranch();
             for (0..width) |i| {
                 const new_bucket_index = bucket_index + i * std.math.pow(usize, width, depth - current_depth - 1);
-                if (new_bucket_index * width >= len) {
-                    break;
-                }
                 nodes[i] = try _init(gpa, data, new_bucket_index, depth, current_depth + 1);
             }
 
@@ -93,12 +93,16 @@ pub fn PVector(comptime T: type) type {
             };
         }
 
+        fn newBranch() Branch {
+            return [_]RefCounter(*Node).Ref{undefined} ** width;
+        }
+
         pub fn getLeaf(self: Self, i: usize) Leaf {
             var node = self.node.getUnwrap();
 
             var level: u6 = @intCast(bits * self.depth);
             while (level > 0) : (level -= bits) {
-                node = node.kind.branch[(i >> level) & mask].?.getUnwrap();
+                node = node.kind.branch[(i >> level) & mask].getUnwrap();
             }
 
             return node.kind.leaf;
@@ -120,24 +124,22 @@ pub fn PVector(comptime T: type) type {
                 .len = self.len,
             };
 
-            var level: u6 = @intCast(bits * self.depth);
-            var branch_idx = (i >> level) & mask;
             var self_curr_node = self.node.getUnwrap();
             curr_node.* = self_curr_node.*;
+
+            var level: u6 = @intCast(bits * self.depth);
+            var branch_idx = (i >> level) & mask;
             while (curr_node.kind == .branch) : ({
-                curr_node = curr_node.kind.branch[branch_idx].?.getUnwrap();
-                self_curr_node = self_curr_node.kind.branch[branch_idx].?.getUnwrap();
+                curr_node = curr_node.kind.branch[branch_idx].getUnwrap();
+                self_curr_node = self_curr_node.kind.branch[branch_idx].getUnwrap();
 
                 level -= bits;
                 branch_idx = (i >> level) & mask;
             }) {
-                var nodes = [_]?RefCounter(*Node).Ref{null} ** width;
+                var nodes = newBranch();
                 for (0..width) |w| {
-                    const branch = curr_node.kind.branch;
-                    var node = branch[w] orelse {
-                        nodes[w] = null;
-                        continue;
-                    };
+                    const branch = self_curr_node.kind.branch;
+                    var node = branch[w];
                     if (w != branch_idx) {
                         nodes[w] = try node.borrow();
                         continue;
@@ -145,7 +147,7 @@ pub fn PVector(comptime T: type) type {
 
                     const new_node_ptr = try gpa.create(Node);
                     const kind = switch (node.getUnwrap().kind) {
-                        .branch => NodeKind{ .branch = [_]?RefCounter(*Node).Ref{null} ** width },
+                        .branch => NodeKind{ .branch = newBranch() },
                         .leaf => |l| NodeKind{ .leaf = l },
                     };
                     new_node_ptr.* = Node{ .kind = kind };
@@ -162,6 +164,64 @@ pub fn PVector(comptime T: type) type {
                         try leaf.getUnwrap().update(
                             gpa,
                             i % width,
+                            value,
+                        ),
+                    ),
+                },
+            };
+            return new_self;
+        }
+
+        pub fn appendAssumeCapacity(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
+            var curr_node = try gpa.create(Node);
+            const curr_node_ref = try RefCounter(*Node).init(gpa, curr_node);
+
+            const new_self = Self{
+                .node = curr_node_ref,
+                .depth = self.depth,
+                .len = self.len + 1,
+            };
+
+            var self_curr_node = self.node.getUnwrap();
+            curr_node.* = self_curr_node.*;
+
+            var level: u6 = @intCast(bits * self.depth);
+            const i = self.len;
+            var branch_idx = (i >> level) & mask;
+            while (curr_node.kind == .branch) : ({
+                curr_node = curr_node.kind.branch[branch_idx].getUnwrap();
+                self_curr_node = self_curr_node.kind.branch[branch_idx].getUnwrap();
+
+                level -= bits;
+                branch_idx = (i >> level) & mask;
+            }) {
+                var nodes = newBranch();
+                for (0..width) |w| {
+                    const branch = self_curr_node.kind.branch;
+                    var node = branch[w];
+                    if (w != branch_idx) {
+                        nodes[w] = try node.borrow();
+                        continue;
+                    }
+
+                    const new_node_ptr = try gpa.create(Node);
+                    const kind = switch (node.getUnwrap().kind) {
+                        .branch => NodeKind{ .branch = newBranch() },
+                        .leaf => |l| NodeKind{ .leaf = l },
+                    };
+                    new_node_ptr.* = Node{ .kind = kind };
+                    nodes[w] = try RefCounter(*Node).init(gpa, new_node_ptr);
+                }
+                curr_node.* = Node{ .kind = .{ .branch = nodes } };
+            }
+
+            const leaf = self_curr_node.kind.leaf;
+            curr_node.* = Node{
+                .kind = .{
+                    .leaf = try Leaf.init(
+                        gpa,
+                        try leaf.getUnwrap().append(
+                            gpa,
                             value,
                         ),
                     ),

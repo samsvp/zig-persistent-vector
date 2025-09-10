@@ -126,3 +126,81 @@ test "update" {
         }
     }
 }
+
+test "append" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const data_sizes = [_]usize{
+        1,
+        2,
+        4,
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        31,
+        32,
+        33,
+        50,
+        64,
+        100,
+        159,
+        160,
+        161,
+        255,
+        256,
+        257,
+        355,
+        480,
+        1000,
+        1023,
+    };
+    for (data_sizes) |s| {
+        std.debug.print("s {}\n", .{s});
+
+        const data = try allocator.alloc(i32, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            data[i] = rand.int(i32);
+        }
+
+        var vector = try PVector(i32).init(allocator, data);
+
+        const new_val = rand.int(i32);
+        var new_vec = try vector.appendAssumeCapacity(allocator, new_val);
+        defer new_vec.deinit(allocator);
+
+        for (0..data.len) |i| {
+            const v0 = vector.get(i);
+            try std.testing.expect(v0 == data[i]);
+
+            const v1 = new_vec.get(i);
+            const ground_truth = data[i];
+            try std.testing.expect(v1 == ground_truth);
+        }
+
+        vector.deinit(allocator);
+
+        for (0..data.len) |i| {
+            const v1 = new_vec.get(i);
+            const ground_truth = data[i];
+            try std.testing.expect(v1 == ground_truth);
+        }
+        try std.testing.expect(new_vec.get(s) == new_val);
+    }
+}
