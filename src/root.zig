@@ -1,7 +1,7 @@
 const std = @import("std");
-const IVector = @import("ivector.zig").IVector;
-const PVector = @import("pvector.zig").PVector;
-const RefCounter = @import("ref_counter.zig").RefCounter;
+pub const IVector = @import("ivector.zig").IVector;
+pub const PVector = @import("pvector.zig").PVector;
+pub const RefCounter = @import("ref_counter.zig").RefCounter;
 
 test "ivector" {
     var gpa = std.heap.DebugAllocator(.{}){};
