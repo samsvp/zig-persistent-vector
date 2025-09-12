@@ -54,24 +54,20 @@ pub fn PVector(comptime T: type) type {
             if (depth == current_depth) {
                 const start_index = bucket_index * width;
 
-                const end_index =
-                    if (len / width > bucket_index)
-                        start_index + width
-                    else if (len / width < bucket_index)
-                        start_index
-                    else
-                        start_index + remainder;
+                const leaf = if (start_index < len) blk: {
+                    const end_index =
+                        if (len / width > bucket_index)
+                            start_index + width
+                        else if (len / width == bucket_index)
+                            start_index + remainder
+                        else
+                            start_index;
 
-                const leaf =
-                    if (start_index < len)
-                        try IVector(T).init(gpa, data[start_index..end_index])
-                    else
-                        IVector(T).empty;
+                    break :blk try IVector(T).init(gpa, data[start_index..end_index]);
+                } else IVector(T).empty;
 
                 const leaf_ref = try RefCounter(IVector(T)).init(gpa, leaf);
-                node_ptr.* = Node{
-                    .kind = .{ .leaf = leaf_ref },
-                };
+                node_ptr.* = Node{ .kind = .{ .leaf = leaf_ref } };
                 return node_ref;
             }
 
@@ -81,9 +77,7 @@ pub fn PVector(comptime T: type) type {
                 nodes[i] = try _init(gpa, data, new_bucket_index, depth, current_depth + 1);
             }
 
-            node_ptr.* = Node{
-                .kind = .{ .branch = nodes },
-            };
+            node_ptr.* = Node{ .kind = .{ .branch = nodes } };
             return node_ref;
         }
 
@@ -104,8 +98,7 @@ pub fn PVector(comptime T: type) type {
                 node = node.kind.branch[(i >> level) & mask].getUnwrap();
             }
 
-            const leaf = node.kind.leaf;
-            return &leaf.getUnwrap().items[i % width];
+            return &node.kind.leaf.getUnwrap().items[i % width];
         }
 
         /// Copies the path to the leaf corresponding to the index i.
@@ -130,15 +123,12 @@ pub fn PVector(comptime T: type) type {
             var self_curr_node = self.node.getUnwrap();
             curr_node.* = self_curr_node.*;
 
-            var level: u6 = @intCast(bits * self.depth);
+            var level: u6 = @intCast(bits * (self.depth + 1));
             var branch_idx = (i >> level) & mask;
-            while (curr_node.kind == .branch) : ({
-                curr_node = curr_node.kind.branch[branch_idx].getUnwrap();
-                self_curr_node = self_curr_node.kind.branch[branch_idx].getUnwrap();
-
+            while (curr_node.kind == .branch) {
                 level -= bits;
                 branch_idx = (i >> level) & mask;
-            }) {
+
                 var nodes = newBranch();
                 for (0..width) |w| {
                     const branch = self_curr_node.kind.branch;
@@ -157,6 +147,9 @@ pub fn PVector(comptime T: type) type {
                     nodes[w] = try RefCounter(*Node).init(gpa, new_node_ptr);
                 }
                 curr_node.* = Node{ .kind = .{ .branch = nodes } };
+
+                curr_node = curr_node.kind.branch[branch_idx].getUnwrap();
+                self_curr_node = self_curr_node.kind.branch[branch_idx].getUnwrap();
             }
 
             return .{
