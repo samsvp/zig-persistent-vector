@@ -10,6 +10,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const options = b.addOptions();
+    options.addOption(u6, "pvec_bits", 5);
+    mod.addOptions("config", options);
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });

@@ -1,4 +1,5 @@
 const std = @import("std");
+const config = @import("config");
 const IVector = @import("ivector.zig").IVector;
 const RefCounter = @import("ref_counter.zig").RefCounter;
 
@@ -8,7 +9,7 @@ pub fn PVector(comptime T: type) type {
         depth: usize,
         node: RefCounter(*Node).Ref,
 
-        pub const bits = 5;
+        pub const bits = config.pvec_bits;
         pub const width = 1 << bits;
         const mask = width - 1;
 
@@ -53,17 +54,19 @@ pub fn PVector(comptime T: type) type {
             if (depth == current_depth) {
                 const start_index = bucket_index * width;
 
-                const end_index = if (len / width > bucket_index)
-                    start_index + width
-                else if (len / width < bucket_index)
-                    start_index
-                else
-                    start_index + remainder;
+                const end_index =
+                    if (len / width > bucket_index)
+                        start_index + width
+                    else if (len / width < bucket_index)
+                        start_index
+                    else
+                        start_index + remainder;
 
-                const leaf = if (start_index < len)
-                    try IVector(T).init(gpa, data[start_index..end_index])
-                else
-                    IVector(T).empty;
+                const leaf =
+                    if (start_index < len)
+                        try IVector(T).init(gpa, data[start_index..end_index])
+                    else
+                        IVector(T).empty;
 
                 const leaf_ref = try RefCounter(IVector(T)).init(gpa, leaf);
                 node_ptr.* = Node{
