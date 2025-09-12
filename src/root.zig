@@ -109,10 +109,10 @@ test "update" {
         defer new_vec.deinit(allocator);
 
         for (0..data.len) |i| {
-            const v0 = vector.get(i);
+            const v0 = vector.get(i).*;
             try std.testing.expect(v0 == data[i]);
 
-            const v1 = new_vec.get(i);
+            const v1 = new_vec.get(i).*;
             const ground_truth = if (i != update_idx) data[i] else new_val;
             try std.testing.expect(v1 == ground_truth);
         }
@@ -120,7 +120,7 @@ test "update" {
         vector.deinit(allocator);
 
         for (0..data.len) |i| {
-            const v1 = new_vec.get(i);
+            const v1 = new_vec.get(i).*;
             const ground_truth = if (i != update_idx) data[i] else new_val;
             try std.testing.expect(v1 == ground_truth);
         }
@@ -198,13 +198,13 @@ test "append" {
         }
 
         for (0..data.len) |i| {
-            const v1 = new_vec.get(i);
+            const v1 = new_vec.get(i).*;
             const ground_truth = data[i];
             try std.testing.expect(v1 == ground_truth);
         }
 
         for (0..new_vals.len) |j| {
-            const v1 = new_vec.get(s + j);
+            const v1 = new_vec.get(s + j).*;
             const gt = new_vals[j];
             try std.testing.expect(v1 == gt);
         }
@@ -278,7 +278,7 @@ test "remove" {
         }
 
         for (0..data.len - 5) |i| {
-            const v1 = new_vec.get(i);
+            const v1 = new_vec.get(i).*;
             const ground_truth = data[i];
             try std.testing.expectEqual(v1, ground_truth);
         }

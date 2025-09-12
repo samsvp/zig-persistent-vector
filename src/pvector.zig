@@ -93,7 +93,7 @@ pub fn PVector(comptime T: type) type {
             };
         }
 
-        pub fn get(self: Self, i: usize) T {
+        pub fn get(self: Self, i: usize) *const T {
             var node = self.node.getUnwrap();
 
             var level: u6 = @intCast(bits * self.depth);
@@ -102,7 +102,7 @@ pub fn PVector(comptime T: type) type {
             }
 
             const leaf = node.kind.leaf;
-            return leaf.getUnwrap().items[i % width];
+            return &leaf.getUnwrap().items[i % width];
         }
 
         /// Copies the path to the leaf corresponding to the index i.
