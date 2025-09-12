@@ -4,14 +4,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const mod = b.addModule("persistent_structures", .{
+    const mod = b.addModule("pvector", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const options = b.addOptions();
-    options.addOption(u6, "pvec_bits", 5);
+    const bits_option = b.option(u6, "bits", "Number of bits of the internal nodes.") orelse 5;
+    options.addOption(u6, "bits", bits_option);
     mod.addOptions("config", options);
 
     const mod_tests = b.addTest(.{

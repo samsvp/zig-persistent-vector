@@ -9,7 +9,7 @@ pub fn PVector(comptime T: type) type {
         depth: usize,
         node: RefCounter(*Node).Ref,
 
-        pub const bits = config.pvec_bits;
+        pub const bits = config.bits;
         pub const width = 1 << bits;
         const mask = width - 1;
 
