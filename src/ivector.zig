@@ -48,3 +48,67 @@ pub fn IVector(comptime T: type) type {
         }
     };
 }
+
+pub fn MultiIVector(comptime T: type) type {
+    return struct {
+        array: std.MultiArrayList(T),
+
+        const Field = std.MultiArrayList(T).Field;
+        const Self = @This();
+
+        pub const empty = Self{ .array = .empty };
+
+        fn FieldType(comptime field: Field) type {
+            return @FieldType(T, @tagName(field));
+        }
+
+        pub fn init(gpa: std.mem.Allocator, items: []const T) !Self {
+            var array: std.MultiArrayList(T) = .empty;
+            try array.ensureUnusedCapacity(gpa, items.len);
+            for (items) |i| {
+                array.appendAssumeCapacity(i);
+            }
+            return .{ .array = array };
+        }
+
+        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+            self.array.deinit(gpa);
+        }
+
+        pub fn len(self: Self) usize {
+            return self.array.len;
+        }
+
+        pub fn update(self: Self, gpa: std.mem.Allocator, i: usize, val: T) !Self {
+            var clone_array = try self.array.clone(gpa);
+            clone_array.set(i, val);
+            return .{ .array = clone_array };
+        }
+
+        pub fn get(self: Self, i: usize) *const T {
+            return self.array.get(i);
+        }
+
+        pub fn getField(self: Self, i: usize, comptime field: Field) FieldType(field) {
+            return self.array.items(field)[i];
+        }
+
+        pub fn append(self: Self, gpa: std.mem.Allocator, val: T) !Self {
+            var clone_array = try self.array.clone(gpa);
+            try clone_array.append(gpa, val);
+            return .{ .array = clone_array };
+        }
+
+        pub fn remove(self: Self, gpa: std.mem.Allocator, idx: usize) !Self {
+            var clone_array = try self.array.clone(gpa);
+            clone_array.orderedRemove(idx);
+            return .{ .array = clone_array };
+        }
+
+        pub fn swapRemove(self: Self, gpa: std.mem.Allocator, idx: usize) !Self {
+            var clone_array = try self.array.clone(gpa);
+            clone_array.swapRemove(idx);
+            return .{ .array = clone_array };
+        }
+    };
+}

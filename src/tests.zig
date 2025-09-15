@@ -1,7 +1,116 @@
 const std = @import("std");
 const IVector = @import("ivector.zig").IVector;
+const MultiIVector = @import("ivector.zig").MultiIVector;
 const PVector = @import("pvector.zig").PVector;
 const RefCounter = @import("ref_counter.zig").RefCounter;
+
+test "multi ivector" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const S2 = struct {
+        field1: i32,
+        field2: f32,
+    };
+
+    const S = struct {
+        field1: i32,
+        field2: f32,
+        field3: S2,
+    };
+
+    var vs = [_]S{
+        .{ .field1 = 1, .field2 = 10, .field3 = undefined },
+        .{ .field1 = 5, .field2 = 125.155, .field3 = undefined },
+        .{ .field1 = 89, .field2 = 95.5, .field3 = undefined },
+        .{ .field1 = 102, .field2 = 10.0, .field3 = undefined },
+        .{ .field1 = 4, .field2 = 257.0, .field3 = undefined },
+    };
+    for (0..vs.len) |i| {
+        const update_val = S2{
+            .field1 = rand.int(i32),
+            .field2 = rand.float(f32),
+        };
+        vs[i].field3 = update_val;
+    }
+
+    var s = try MultiIVector(S).init(allocator, &vs);
+    defer s.deinit(allocator);
+
+    for (0..vs.len) |i| {
+        try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
+        try std.testing.expectEqual(vs[i].field3.field1, s.getField(i, .field3).field1);
+    }
+
+    // update
+    for (0..15) |_| {
+        const update_index = rand.intRangeAtMost(usize, 0, vs.len - 1);
+        const update_val_s = S2{
+            .field1 = rand.int(i32),
+            .field2 = rand.float(f32),
+        };
+        const update_val = S{
+            .field1 = rand.int(i32),
+            .field2 = rand.float(f32),
+            .field3 = update_val_s,
+        };
+        var new_s = try s.update(allocator, update_index, update_val);
+        defer new_s.deinit(allocator);
+        for (0..vs.len) |i| {
+            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
+            const gt_new = if (i == update_index) update_val else vs[i];
+            try std.testing.expectEqual(gt_new.field1, new_s.getField(i, .field1));
+        }
+    }
+
+    // remove
+    for (0..15) |_| {
+        const remove_index = rand.intRangeAtMost(usize, 0, vs.len - 1);
+        var new_s = try s.remove(allocator, remove_index);
+        defer new_s.deinit(allocator);
+        for (0..vs.len) |i| {
+            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
+        }
+
+        for (0..vs.len - 1) |i| {
+            const idx = if (i >= remove_index) i + 1 else i;
+            try std.testing.expectEqual(vs[idx].field1, new_s.getField(i, .field1));
+        }
+    }
+
+    // append
+    for (0..15) |_| {
+        const update_val_s = S2{
+            .field1 = rand.int(i32),
+            .field2 = rand.float(f32),
+        };
+        const update_val = S{
+            .field1 = rand.int(i32),
+            .field2 = rand.float(f32),
+            .field3 = update_val_s,
+        };
+        var new_s = try s.append(allocator, update_val);
+        defer new_s.deinit(allocator);
+        for (0..vs.len) |i| {
+            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
+            try std.testing.expectEqual(vs[i].field1, new_s.getField(i, .field1));
+        }
+        try std.testing.expectEqual(update_val_s.field1, new_s.getField(vs.len, .field3).field1);
+        try std.testing.expectEqual(new_s.len() - 1, s.len());
+    }
+}
 
 test "ivector" {
     var gpa = std.heap.DebugAllocator(.{}){};
