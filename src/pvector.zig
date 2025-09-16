@@ -1,9 +1,11 @@
 const std = @import("std");
 const config = @import("config");
 const IVector = @import("ivector.zig").IVector;
+const MultiIVector = @import("ivector.zig").MultiIVector;
+const VecTypes = @import("ivector.zig").VecTypes;
 const RefCounter = @import("ref_counter.zig").RefCounter;
 
-pub fn PVector(comptime T: type) type {
+pub fn PVector(comptime T: type, comptime vec_type: VecTypes) type {
     return struct {
         len: usize,
         depth: usize,
@@ -13,8 +15,23 @@ pub fn PVector(comptime T: type) type {
         pub const width = 1 << bits;
         const mask = width - 1;
 
+        const VecT = switch (vec_type) {
+            .ivector => IVector(T),
+            .multi_ivector => MultiIVector(T),
+        };
+        const Field = switch (vec_type) {
+            .ivector => T,
+            .multi_ivector => MultiIVector(T).Field,
+        };
+        fn FieldType(comptime field: Field) type {
+            return switch (vec_type) {
+                .ivector => T,
+                .multi_ivector => MultiIVector(T).FieldType(field),
+            };
+        }
+
         const Self = @This();
-        const Leaf = RefCounter(IVector(T)).Ref;
+        const Leaf = RefCounter(VecT).Ref;
         const Branch = [width]RefCounter(*Node).Ref;
 
         const Node = struct {
@@ -63,10 +80,10 @@ pub fn PVector(comptime T: type) type {
                         else
                             start_index;
 
-                    break :blk try IVector(T).init(gpa, data[start_index..end_index]);
-                } else IVector(T).empty;
+                    break :blk try VecT.init(gpa, data[start_index..end_index]);
+                } else VecT.empty;
 
-                const leaf_ref = try RefCounter(IVector(T)).init(gpa, leaf);
+                const leaf_ref = try RefCounter(VecT).init(gpa, leaf);
                 node_ptr.* = Node{ .kind = .{ .leaf = leaf_ref } };
                 return node_ref;
             }
@@ -90,7 +107,7 @@ pub fn PVector(comptime T: type) type {
             };
         }
 
-        pub fn get(self: Self, i: usize) *const T {
+        pub fn getLeaf(self: Self, i: usize) Leaf {
             var node = self.node.getUnwrap();
 
             var level: u6 = @intCast(bits * self.depth);
@@ -98,7 +115,19 @@ pub fn PVector(comptime T: type) type {
                 node = node.kind.branch[(i >> level) & mask].getUnwrap();
             }
 
-            return &node.kind.leaf.getUnwrap().items[i % width];
+            return node.kind.leaf;
+        }
+
+        pub fn get(self: Self, i: usize) T {
+            const leaf = self.getLeaf(i).getUnwrap();
+            return leaf.get(i % width);
+        }
+
+        pub fn getField(self: Self, i: usize, comptime field: Field) *const FieldType(field) {
+            return switch (vec_type) {
+                .ivector => &self.get(i),
+                .multi_ivector => self.getLeaf(i).getUnwrap().getField(i % width, field),
+            };
         }
 
         /// Copies the path to the leaf corresponding to the index i.
@@ -245,9 +274,9 @@ pub fn PVector(comptime T: type) type {
             const node_ref = try RefCounter(*Node).init(gpa, node_ptr);
 
             if (self.depth + 1 == current_depth) {
-                const leaf = IVector(T).empty;
+                const leaf = VecT.empty;
 
-                const leaf_ref = try RefCounter(IVector(T)).init(gpa, leaf);
+                const leaf_ref = try RefCounter(VecT).init(gpa, leaf);
                 node_ptr.* = Node{
                     .kind = .{ .leaf = leaf_ref },
                 };

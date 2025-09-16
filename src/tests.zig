@@ -50,7 +50,7 @@ test "multi ivector" {
     defer s.deinit(allocator);
 
     for (0..vs.len) |i| {
-        try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
+        try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1).*);
         try std.testing.expectEqual(vs[i].field3.field1, s.getField(i, .field3).field1);
     }
 
@@ -69,9 +69,9 @@ test "multi ivector" {
         var new_s = try s.update(allocator, update_index, update_val);
         defer new_s.deinit(allocator);
         for (0..vs.len) |i| {
-            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
+            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1).*);
             const gt_new = if (i == update_index) update_val else vs[i];
-            try std.testing.expectEqual(gt_new.field1, new_s.getField(i, .field1));
+            try std.testing.expectEqual(gt_new.field1, new_s.getField(i, .field1).*);
         }
     }
 
@@ -81,12 +81,12 @@ test "multi ivector" {
         var new_s = try s.remove(allocator, remove_index);
         defer new_s.deinit(allocator);
         for (0..vs.len) |i| {
-            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
+            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1).*);
         }
 
         for (0..vs.len - 1) |i| {
             const idx = if (i >= remove_index) i + 1 else i;
-            try std.testing.expectEqual(vs[idx].field1, new_s.getField(i, .field1));
+            try std.testing.expectEqual(vs[idx].field1, new_s.getField(i, .field1).*);
         }
     }
 
@@ -104,8 +104,8 @@ test "multi ivector" {
         var new_s = try s.append(allocator, update_val);
         defer new_s.deinit(allocator);
         for (0..vs.len) |i| {
-            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1));
-            try std.testing.expectEqual(vs[i].field1, new_s.getField(i, .field1));
+            try std.testing.expectEqual(vs[i].field1, s.getField(i, .field1).*);
+            try std.testing.expectEqual(vs[i].field1, new_s.getField(i, .field1).*);
         }
         try std.testing.expectEqual(update_val_s.field1, new_s.getField(vs.len, .field3).field1);
         try std.testing.expectEqual(new_s.len() - 1, s.len());
@@ -209,7 +209,7 @@ test "update" {
             data[i] = rand.int(i32);
         }
 
-        var vector = try PVector(i32).init(allocator, data);
+        var vector = try PVector(i32, .ivector).init(allocator, data);
 
         const update_idx = rand.intRangeAtMost(usize, 0, data.len - 1);
         const new_val = rand.int(i32);
@@ -218,10 +218,10 @@ test "update" {
         defer new_vec.deinit(allocator);
 
         for (0..data.len) |i| {
-            const v0 = vector.get(i).*;
+            const v0 = vector.get(i);
             try std.testing.expect(v0 == data[i]);
 
-            const v1 = new_vec.get(i).*;
+            const v1 = new_vec.get(i);
             const ground_truth = if (i != update_idx) data[i] else new_val;
             try std.testing.expect(v1 == ground_truth);
         }
@@ -229,7 +229,7 @@ test "update" {
         vector.deinit(allocator);
 
         for (0..data.len) |i| {
-            const v1 = new_vec.get(i).*;
+            const v1 = new_vec.get(i);
             const ground_truth = if (i != update_idx) data[i] else new_val;
             try std.testing.expect(v1 == ground_truth);
         }
@@ -295,7 +295,7 @@ test "append" {
             data[i] = rand.int(i32);
         }
 
-        var new_vec = try PVector(i32).init(allocator, data);
+        var new_vec = try PVector(i32, .ivector).init(allocator, data);
         defer new_vec.deinit(allocator);
 
         var new_vals: [5]i32 = undefined;
@@ -307,13 +307,13 @@ test "append" {
         }
 
         for (0..data.len) |i| {
-            const v1 = new_vec.get(i).*;
+            const v1 = new_vec.get(i);
             const ground_truth = data[i];
             try std.testing.expect(v1 == ground_truth);
         }
 
         for (0..new_vals.len) |j| {
-            const v1 = new_vec.get(s + j).*;
+            const v1 = new_vec.get(s + j);
             const gt = new_vals[j];
             try std.testing.expect(v1 == gt);
         }
@@ -377,7 +377,7 @@ test "remove" {
             data[i] = rand.int(i32);
         }
 
-        var new_vec = try PVector(i32).init(allocator, data);
+        var new_vec = try PVector(i32, .ivector).init(allocator, data);
         defer new_vec.deinit(allocator);
 
         for (0..5) |_| {
@@ -387,9 +387,225 @@ test "remove" {
         }
 
         for (0..data.len - 5) |i| {
-            const v1 = new_vec.get(i).*;
+            const v1 = new_vec.get(i);
             const ground_truth = data[i];
             try std.testing.expectEqual(v1, ground_truth);
+        }
+
+        try std.testing.expectEqual(s - 5, new_vec.len);
+    }
+}
+
+test "multi vec backend" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const S = struct {
+        field1: i32,
+        field2: f32,
+    };
+
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 64, 100, 159, 160, 161, 255, 256, 257, 355, 480, 1000, 1023 };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(S, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            const val = S{
+                .field1 = rand.int(i32),
+                .field2 = rand.float(f32),
+            };
+            data[i] = val;
+        }
+
+        var vector = try PVector(S, .multi_ivector).init(allocator, data);
+        defer vector.deinit(allocator);
+
+        for (0..data.len) |i| {
+            const v0 = vector.getField(i, .field1).*;
+            try std.testing.expect(v0 == data[i].field1);
+        }
+    }
+}
+
+test "multi vec append" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const S = struct {
+        field1: i32,
+        field2: f32,
+    };
+
+    const data_sizes = [_]usize{
+        1,
+        2,
+        4,
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        31,
+        32,
+        33,
+        50,
+        64,
+        100,
+        159,
+        160,
+        161,
+        255,
+        256,
+        257,
+        355,
+        480,
+        1000,
+        1023,
+    };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(S, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            const val = S{
+                .field1 = rand.int(i32),
+                .field2 = rand.float(f32),
+            };
+            data[i] = val;
+        }
+
+        var new_vec = try PVector(S, .multi_ivector).init(allocator, data);
+        defer new_vec.deinit(allocator);
+
+        var new_vals: [5]S = undefined;
+        for (0..5) |j| {
+            const val = S{
+                .field1 = rand.int(i32),
+                .field2 = rand.float(f32),
+            };
+            new_vals[j] = val;
+            const new_vec_tmp = try new_vec.append(allocator, new_vals[j]);
+            new_vec.deinit(allocator);
+            new_vec = new_vec_tmp;
+        }
+
+        for (0..data.len) |i| {
+            const v1 = new_vec.get(i);
+            const ground_truth = data[i];
+            try std.testing.expectEqualDeep(v1, ground_truth);
+        }
+
+        for (0..new_vals.len) |j| {
+            const v1 = new_vec.get(s + j);
+            const gt = new_vals[j];
+            try std.testing.expectEqualDeep(v1, gt);
+        }
+        try std.testing.expectEqual(s + 5, new_vec.len);
+    }
+}
+
+test "multi vec remove" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const S = struct {
+        field1: i32,
+        field2: f32,
+    };
+
+    const data_sizes = [_]usize{
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        31,
+        32,
+        33,
+        50,
+        64,
+        100,
+        159,
+        160,
+        161,
+        255,
+        256,
+        257,
+        355,
+        480,
+        1000,
+        1023,
+        2560,
+        32767,
+        32768,
+        32769,
+        32799,
+        32800,
+        32801,
+        32860,
+        50000,
+    };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(S, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            const val = S{
+                .field1 = rand.int(i32),
+                .field2 = rand.float(f32),
+            };
+            data[i] = val;
+        }
+
+        var new_vec = try PVector(S, .ivector).init(allocator, data);
+        defer new_vec.deinit(allocator);
+
+        for (0..5) |_| {
+            const new_vec_tmp = try new_vec.pop(allocator);
+            new_vec.deinit(allocator);
+            new_vec = new_vec_tmp;
+        }
+
+        for (0..data.len - 5) |i| {
+            const v1 = new_vec.get(i);
+            const ground_truth = data[i];
+            try std.testing.expectEqualDeep(v1, ground_truth);
         }
 
         try std.testing.expectEqual(s - 5, new_vec.len);

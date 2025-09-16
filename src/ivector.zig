@@ -1,6 +1,11 @@
 const std = @import("std");
 const RefCounter = @import("ref_counter.zig").RefCounter;
 
+pub const VecTypes = enum {
+    ivector,
+    multi_ivector,
+};
+
 pub fn IVector(comptime T: type) type {
     return struct {
         items: []const T,
@@ -16,6 +21,10 @@ pub fn IVector(comptime T: type) type {
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             gpa.free(self.items);
+        }
+
+        pub fn get(self: Self, i: usize) T {
+            return self.items[i];
         }
 
         pub fn update(self: Self, gpa: std.mem.Allocator, i: usize, val: T) !Self {
@@ -46,6 +55,17 @@ pub fn IVector(comptime T: type) type {
 
             return .{ .items = items };
         }
+
+        pub fn swapRemove(self: Self, gpa: std.mem.Allocator, idx: usize) !Self {
+            var items = try gpa.alloc(T, self.items.len - 1);
+
+            for (0..self.items.len) |i| {
+                const item = if (i == idx) self.items[items.len] else self.items[i];
+                items[i] = item;
+            }
+
+            return .{ .items = items };
+        }
     };
 }
 
@@ -53,12 +73,12 @@ pub fn MultiIVector(comptime T: type) type {
     return struct {
         array: std.MultiArrayList(T),
 
-        const Field = std.MultiArrayList(T).Field;
         const Self = @This();
 
         pub const empty = Self{ .array = .empty };
 
-        fn FieldType(comptime field: Field) type {
+        pub const Field = std.MultiArrayList(T).Field;
+        pub fn FieldType(comptime field: Field) type {
             return @FieldType(T, @tagName(field));
         }
 
@@ -85,12 +105,12 @@ pub fn MultiIVector(comptime T: type) type {
             return .{ .array = clone_array };
         }
 
-        pub fn get(self: Self, i: usize) *const T {
-            return self.array.get(i);
+        pub fn get(self: Self, i: usize) T {
+            return self.array.slice().get(i);
         }
 
-        pub fn getField(self: Self, i: usize, comptime field: Field) FieldType(field) {
-            return self.array.items(field)[i];
+        pub fn getField(self: Self, i: usize, comptime field: Field) *const FieldType(field) {
+            return &self.array.items(field)[i];
         }
 
         pub fn append(self: Self, gpa: std.mem.Allocator, val: T) !Self {
