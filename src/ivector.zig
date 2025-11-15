@@ -1,11 +1,6 @@
 const std = @import("std");
 const RefCounter = @import("ref_counter.zig").RefCounter;
 
-pub const VecTypes = enum {
-    ivector,
-    multi_ivector,
-};
-
 pub fn IVector(comptime T: type) type {
     return struct {
         items: []const T,
@@ -21,6 +16,10 @@ pub fn IVector(comptime T: type) type {
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             gpa.free(self.items);
+        }
+
+        pub fn len(self: Self) usize {
+            return self.items.len;
         }
 
         pub fn get(self: Self, i: usize) T {

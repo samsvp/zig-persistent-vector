@@ -2,6 +2,7 @@ const std = @import("std");
 const IVector = @import("ivector.zig").IVector;
 const MultiIVector = @import("ivector.zig").MultiIVector;
 const PVector = @import("pvector.zig").PVector;
+const MultiPVector = @import("pvector.zig").MultiPVector;
 const RefCounter = @import("ref_counter.zig").RefCounter;
 
 test "multi ivector" {
@@ -209,7 +210,7 @@ test "update" {
             data[i] = rand.int(i32);
         }
 
-        var vector = try PVector(i32, .ivector).init(allocator, data);
+        var vector = try PVector(i32, IVector).init(allocator, data);
 
         const update_idx = rand.intRangeAtMost(usize, 0, data.len - 1);
         const new_val = rand.int(i32);
@@ -295,7 +296,7 @@ test "append" {
             data[i] = rand.int(i32);
         }
 
-        var new_vec = try PVector(i32, .ivector).init(allocator, data);
+        var new_vec = try PVector(i32, IVector).init(allocator, data);
         defer new_vec.deinit(allocator);
 
         var new_vals: [5]i32 = undefined;
@@ -377,7 +378,7 @@ test "remove" {
             data[i] = rand.int(i32);
         }
 
-        var new_vec = try PVector(i32, .ivector).init(allocator, data);
+        var new_vec = try PVector(i32, IVector).init(allocator, data);
         defer new_vec.deinit(allocator);
 
         for (0..5) |_| {
@@ -429,7 +430,7 @@ test "multi vec backend" {
             data[i] = val;
         }
 
-        var vector = try PVector(S, .multi_ivector).init(allocator, data);
+        var vector = try MultiPVector(S).init(allocator, data);
         defer vector.deinit(allocator);
 
         for (0..data.len) |i| {
@@ -498,7 +499,7 @@ test "multi vec append" {
             data[i] = val;
         }
 
-        var new_vec = try PVector(S, .multi_ivector).init(allocator, data);
+        var new_vec = try MultiPVector(S).init(allocator, data);
         defer new_vec.deinit(allocator);
 
         var new_vals: [5]S = undefined;
@@ -524,7 +525,7 @@ test "multi vec append" {
             const gt = new_vals[j];
             try std.testing.expectEqualDeep(v1, gt);
         }
-        try std.testing.expectEqual(s + 5, new_vec.len);
+        try std.testing.expectEqual(s + 5, new_vec.vec.len);
     }
 }
 
@@ -593,7 +594,7 @@ test "multi vec remove" {
             data[i] = val;
         }
 
-        var new_vec = try PVector(S, .ivector).init(allocator, data);
+        var new_vec = try MultiPVector(S).init(allocator, data);
         defer new_vec.deinit(allocator);
 
         for (0..5) |_| {
@@ -608,6 +609,6 @@ test "multi vec remove" {
             try std.testing.expectEqualDeep(v1, ground_truth);
         }
 
-        try std.testing.expectEqual(s - 5, new_vec.len);
+        try std.testing.expectEqual(s - 5, new_vec.vec.len);
     }
 }

@@ -2,10 +2,9 @@ const std = @import("std");
 const config = @import("config");
 const IVector = @import("ivector.zig").IVector;
 const MultiIVector = @import("ivector.zig").MultiIVector;
-const VecTypes = @import("ivector.zig").VecTypes;
 const RefCounter = @import("ref_counter.zig").RefCounter;
 
-pub fn PVector(comptime T: type, comptime vec_type: VecTypes) type {
+pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
     return struct {
         len: usize,
         depth: usize,
@@ -15,21 +14,7 @@ pub fn PVector(comptime T: type, comptime vec_type: VecTypes) type {
         pub const width = 1 << bits;
         const mask = width - 1;
 
-        const VecT = switch (vec_type) {
-            .ivector => IVector(T),
-            .multi_ivector => MultiIVector(T),
-        };
-        const Field = switch (vec_type) {
-            .ivector => T,
-            .multi_ivector => MultiIVector(T).Field,
-        };
-        fn FieldType(comptime field: Field) type {
-            return switch (vec_type) {
-                .ivector => T,
-                .multi_ivector => MultiIVector(T).FieldType(field),
-            };
-        }
-
+        const VecT = Vec(T);
         const Self = @This();
         const Leaf = RefCounter(VecT).Ref;
         const Branch = [width]RefCounter(*Node).Ref;
@@ -107,6 +92,10 @@ pub fn PVector(comptime T: type, comptime vec_type: VecTypes) type {
             };
         }
 
+        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+            self.node.release(gpa);
+        }
+
         pub fn getLeaf(self: Self, i: usize) Leaf {
             var node = self.node.getUnwrap();
 
@@ -121,13 +110,6 @@ pub fn PVector(comptime T: type, comptime vec_type: VecTypes) type {
         pub fn get(self: Self, i: usize) T {
             const leaf = self.getLeaf(i).getUnwrap();
             return leaf.get(i % width);
-        }
-
-        pub fn getField(self: Self, i: usize, comptime field: Field) *const FieldType(field) {
-            return switch (vec_type) {
-                .ivector => &self.get(i),
-                .multi_ivector => self.getLeaf(i).getUnwrap().getField(i % width, field),
-            };
         }
 
         /// Copies the path to the leaf corresponding to the index i.
@@ -250,17 +232,13 @@ pub fn PVector(comptime T: type, comptime vec_type: VecTypes) type {
                 .kind = .{
                     .leaf = try Leaf.init(
                         gpa,
-                        try leaf.remove(gpa, leaf.items.len - 1),
+                        try leaf.remove(gpa, leaf.len() - 1),
                     ),
                 },
             };
 
             clone.self.len -= 1;
             return clone.self;
-        }
-
-        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
-            self.node.release(gpa);
         }
 
         /// Grows the current vector depth by 1.
@@ -301,6 +279,60 @@ pub fn PVector(comptime T: type, comptime vec_type: VecTypes) type {
 
         fn newBranch() Branch {
             return [_]RefCounter(*Node).Ref{undefined} ** width;
+        }
+    };
+}
+
+pub fn MultiPVector(comptime T: type) type {
+    return struct {
+        vec: VecT,
+
+        const Self = @This();
+        const VecT = PVector(T, MultiIVector);
+        const Field = MultiIVector(T).Field;
+
+        fn FieldType(comptime field: Field) type {
+            return MultiIVector(T).FieldType(field);
+        }
+
+        pub fn init(gpa: std.mem.Allocator, data: []const T) !Self {
+            return .{ .vec = try VecT.init(gpa, data) };
+        }
+
+        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+            self.vec.node.release(gpa);
+        }
+
+        pub fn get(self: Self, i: usize) T {
+            return self.vec.get(i);
+        }
+
+        /// Returns a new vector with the passed value at index i. If i == self.len and the depth of the trie
+        /// does not need to increase, then the value is added to the end of the new collection.
+        pub fn update(self: *Self, gpa: std.mem.Allocator, i: usize, value: T) !Self {
+            const vec = try self.vec.update(gpa, i, value);
+            return .{ .vec = vec };
+        }
+
+        /// Appends the given value to the vector. Assumes that some tail node has capacity to hold it.
+        pub fn appendAssumeCapacity(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
+            const vec = try self.vec.appendAssumeCapacity(gpa, value);
+            return .{ .vec = vec };
+        }
+
+        /// Appends the given value to the vector. Increases the vector depth if necessary.
+        pub fn append(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
+            const vec = try self.vec.append(gpa, value);
+            return .{ .vec = vec };
+        }
+
+        pub fn pop(self: *Self, gpa: std.mem.Allocator) !Self {
+            const vec = try self.vec.pop(gpa);
+            return .{ .vec = vec };
+        }
+
+        pub fn getField(self: Self, i: usize, comptime field: Field) *const FieldType(field) {
+            return self.vec.getLeaf(i).getUnwrap().getField(i % VecT.width, field);
         }
     };
 }
