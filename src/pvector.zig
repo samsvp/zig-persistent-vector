@@ -241,6 +241,50 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
             return clone.self;
         }
 
+        pub fn toArray(self: Self, gpa: std.mem.Allocator) ![]const T {
+            const arr = try gpa.alloc(T, self.len);
+
+            var i: usize = 0;
+            while (i < self.len) : (i += width) {
+                const leaf = self.getLeaf(i).getUnwrap();
+                const array = try leaf.toArray(gpa);
+                defer gpa.free(array);
+
+                @memcpy(arr[i .. i + array.len], array);
+            }
+
+            return arr;
+        }
+
+        fn toBuffer(self: Self, buffer: []T) void {
+            var i: usize = 0;
+            while (i < self.len) : (i += width) {
+                const leaf = self.getLeaf(i).getUnwrap();
+                leaf.toBuffer(buffer[i .. i + leaf.len()]);
+            }
+        }
+
+        pub fn concat(self: Self, gpa: std.mem.Allocator, others: []const Self) !Self {
+            var len = self.len;
+            for (others) |o| {
+                len += o.len;
+            }
+
+            const buffer = try gpa.alloc(T, len);
+            defer gpa.free(buffer);
+
+            self.toBuffer(buffer[0..self.len]);
+            var start = self.len;
+            for (others) |o| {
+                const end = start + o.len;
+                defer start = end;
+
+                o.toBuffer(buffer[start..end]);
+            }
+
+            return Self.init(gpa, buffer);
+        }
+
         /// Grows the current vector depth by 1.
         fn grow(
             self: *Self,

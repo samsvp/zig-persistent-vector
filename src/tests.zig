@@ -612,3 +612,84 @@ test "multi vec remove" {
         try std.testing.expectEqual(s - 5, new_vec.vec.len);
     }
 }
+
+test "to array" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 64, 100, 159, 160, 161, 255, 256, 257, 355, 480, 1000, 1023 };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(i32, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            data[i] = rand.int(i32);
+        }
+
+        var vector = try PVector(i32, IVector).init(allocator, data);
+        defer vector.deinit(allocator);
+
+        const new_arr = try vector.toArray(allocator);
+        defer allocator.free(new_arr);
+
+        try std.testing.expectEqualDeep(data, new_arr);
+    }
+}
+
+test "concat" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 64, 100, 159, 160, 161, 255, 256, 257, 355, 480, 1000, 1023 };
+    for (data_sizes) |s| {
+        const data_1 = try allocator.alloc(i32, s);
+        defer allocator.free(data_1);
+
+        const data_2 = try allocator.alloc(i32, s);
+        defer allocator.free(data_2);
+
+        for (0..data_1.len) |i| {
+            data_1[i] = rand.int(i32);
+            data_2[i] = rand.int(i32);
+        }
+
+        var vector_1 = try PVector(i32, IVector).init(allocator, data_1);
+        defer vector_1.deinit(allocator);
+
+        var vector_2 = try PVector(i32, IVector).init(allocator, data_2);
+        defer vector_2.deinit(allocator);
+
+        var new_vec = try vector_1.concat(allocator, &[1]PVector(i32, IVector){vector_2});
+        defer new_vec.deinit(allocator);
+
+        for (0..data_1.len) |i| {
+            try std.testing.expectEqual(data_1[i], new_vec.get(i));
+        }
+
+        for (0..data_2.len) |i| {
+            try std.testing.expectEqual(data_2[i], new_vec.get(data_1.len + i));
+        }
+    }
+}

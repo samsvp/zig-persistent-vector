@@ -65,6 +65,14 @@ pub fn IVector(comptime T: type) type {
 
             return .{ .items = items };
         }
+
+        pub fn toArray(self: Self, gpa: std.mem.Allocator) ![]const T {
+            return gpa.dupe(T, self.items);
+        }
+
+        pub fn toBuffer(self: Self, buffer: []T) void {
+            @memcpy(buffer, self.items);
+        }
     };
 }
 
@@ -128,6 +136,20 @@ pub fn MultiIVector(comptime T: type) type {
             var clone_array = try self.array.clone(gpa);
             clone_array.swapRemove(idx);
             return .{ .array = clone_array };
+        }
+
+        pub fn toArray(self: Self, gpa: std.mem.Allocator) ![]const T {
+            const array = try gpa.alloc(T, self.array.len);
+            for (0..self.array.len) |i| {
+                array[i] = self.array.get(i);
+            }
+            return array;
+        }
+
+        pub fn toBuffer(self: Self, buffer: []T) void {
+            for (0..self.array.len) |i| {
+                buffer[i] = self.array.get(i);
+            }
         }
     };
 }
