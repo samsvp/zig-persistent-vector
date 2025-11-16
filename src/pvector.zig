@@ -256,7 +256,7 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
             return arr;
         }
 
-        fn toBuffer(self: Self, buffer: []T) void {
+        pub fn toBuffer(self: Self, buffer: []T) void {
             var i: usize = 0;
             while (i < self.len) : (i += width) {
                 const leaf = self.getLeaf(i).getUnwrap();
