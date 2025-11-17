@@ -116,8 +116,8 @@ pub fn MultiIVector(comptime T: type) type {
             return self.array.slice().get(i);
         }
 
-        pub fn getField(self: Self, i: usize, comptime field: Field) *const FieldType(field) {
-            return &self.array.items(field)[i];
+        pub fn getField(self: Self, i: usize, comptime field: Field) FieldType(field) {
+            return self.array.items(field)[i];
         }
 
         pub fn append(self: Self, gpa: std.mem.Allocator, val: T) !Self {

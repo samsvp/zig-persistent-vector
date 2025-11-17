@@ -241,6 +241,10 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
             return clone.self;
         }
 
+        pub fn toIter(self: Self) Iterator {
+            return Iterator.init(self);
+        }
+
         pub fn toArray(self: Self, gpa: std.mem.Allocator) ![]const T {
             const arr = try gpa.alloc(T, self.len);
 
@@ -324,6 +328,33 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
         fn newBranch() Branch {
             return [_]RefCounter(*Node).Ref{undefined} ** width;
         }
+
+        pub const Iterator = struct {
+            vec: Self,
+            leaf: VecT,
+            index: usize = 0,
+
+            pub fn init(vec: Self) Iterator {
+                return .{
+                    .vec = vec,
+                    .leaf = undefined,
+                };
+            }
+
+            pub fn next(iter: *Iterator) ?T {
+                if (iter.index == iter.vec.len) {
+                    return null;
+                }
+
+                if (iter.index % width == 0) {
+                    iter.leaf = iter.vec.getLeaf(iter.index).getUnwrap();
+                }
+
+                const val = iter.leaf.get(iter.index % width);
+                iter.index += 1;
+                return val;
+            }
+        };
     };
 }
 
@@ -375,8 +406,72 @@ pub fn MultiPVector(comptime T: type) type {
             return .{ .vec = vec };
         }
 
-        pub fn getField(self: Self, i: usize, comptime field: Field) *const FieldType(field) {
+        pub fn getField(self: Self, i: usize, comptime field: Field) FieldType(field) {
             return self.vec.getLeaf(i).getUnwrap().getField(i % VecT.width, field);
+        }
+
+        pub fn toIter(self: Self) Iterator {
+            return Iterator.init(self);
+        }
+
+        pub fn toFieldIter(self: Self, comptime field: Field) IteratorField(field) {
+            return IteratorField(field).init(self);
+        }
+
+        pub const Iterator = struct {
+            multi_pvec: Self,
+            leaf: MultiIVector(T),
+            index: usize = 0,
+
+            pub fn init(vec: Self) Iterator {
+                return .{
+                    .multi_pvec = vec,
+                    .leaf = undefined,
+                };
+            }
+
+            pub fn next(iter: *Iterator) ?T {
+                if (iter.index == iter.multi_pvec.vec.len) {
+                    return null;
+                }
+
+                if (iter.index % VecT.width == 0) {
+                    iter.leaf = iter.multi_pvec.vec.getLeaf(iter.index).getUnwrap();
+                }
+
+                const val = iter.leaf.get(iter.index % VecT.width);
+                iter.index += 1;
+                return val;
+            }
+        };
+
+        pub fn IteratorField(comptime field: Field) type {
+            return struct {
+                multi_pvec: Self,
+                leaf: MultiIVector(T),
+                index: usize = 0,
+
+                pub fn init(vec: Self) IteratorField(field) {
+                    return .{
+                        .multi_pvec = vec,
+                        .leaf = undefined,
+                    };
+                }
+
+                pub fn next(iter: *IteratorField(field)) ?FieldType(field) {
+                    if (iter.index == iter.multi_pvec.vec.len) {
+                        return null;
+                    }
+
+                    if (iter.index % VecT.width == 0) {
+                        iter.leaf = iter.multi_pvec.vec.getLeaf(iter.index).getUnwrap();
+                    }
+
+                    const val = iter.leaf.getField(iter.index % VecT.width, field);
+                    iter.index += 1;
+                    return val;
+                }
+            };
         }
     };
 }
