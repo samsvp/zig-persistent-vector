@@ -767,6 +767,11 @@ test "multi field iter" {
             try std.testing.expectEqual(data[i].field1, iter.next().?);
         }
 
+        var tail_iter = vector.tailField(.field2);
+        for (1..data.len) |i| {
+            try std.testing.expectEqual(data[i].field2, tail_iter.next().?);
+        }
+
         try std.testing.expectEqual(null, iter.next());
     }
 }
@@ -840,8 +845,13 @@ test "multi iter" {
         defer vector.deinit(allocator);
 
         var iter = vector.toIter();
+        try std.testing.expectEqual(data[0], iter.head().?);
         for (0..data.len) |i| {
             try std.testing.expectEqual(data[i], iter.next().?);
+        }
+        var tail_iter = vector.tail();
+        for (1..data.len) |i| {
+            try std.testing.expectEqual(data[i], tail_iter.next().?);
         }
 
         try std.testing.expectEqual(null, iter.next());

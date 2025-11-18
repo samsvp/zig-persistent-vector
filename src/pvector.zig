@@ -96,6 +96,14 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
             self.node.release(gpa);
         }
 
+        pub fn head(self: Self) T {
+            return self.get(0);
+        }
+
+        pub fn tail(self: Self) Iterator {
+            return self.toIter().tail();
+        }
+
         pub fn getLeaf(self: Self, i: usize) Leaf {
             var node = self.node.getUnwrap();
 
@@ -342,7 +350,7 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
             }
 
             pub fn next(iter: *Iterator) ?T {
-                if (iter.index == iter.vec.len) {
+                if (iter.index >= iter.vec.len) {
                     return null;
                 }
 
@@ -353,6 +361,26 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
                 const val = iter.leaf.get(iter.index % width);
                 iter.index += 1;
                 return val;
+            }
+
+            pub fn head(iter: Iterator) ?T {
+                if (iter.index >= iter.vec.len) {
+                    return null;
+                }
+                return iter.vec.get(iter.index);
+            }
+
+            pub fn tail(iter: Iterator) Iterator {
+                const leaf = if (iter.index < iter.vec.len - 1)
+                    iter.vec.getLeaf(iter.index + 1).getUnwrap()
+                else
+                    undefined;
+
+                return .{
+                    .index = iter.index + 1,
+                    .vec = iter.vec,
+                    .leaf = leaf,
+                };
             }
         };
     };
@@ -376,6 +404,14 @@ pub fn MultiPVector(comptime T: type) type {
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             self.vec.node.release(gpa);
+        }
+
+        pub fn head(self: Self) T {
+            return self.get(0);
+        }
+
+        pub fn tail(self: Self) VecT.Iterator {
+            return self.toIter().tail();
         }
 
         pub fn get(self: Self, i: usize) T {
@@ -406,44 +442,25 @@ pub fn MultiPVector(comptime T: type) type {
             return .{ .vec = vec };
         }
 
+        pub fn headField(self: Self, comptime field: Field) T {
+            return self.getField(0, field);
+        }
+
+        pub fn tailField(self: Self, comptime field: Field) IteratorField(field) {
+            return self.toFieldIter(field).tail();
+        }
+
         pub fn getField(self: Self, i: usize, comptime field: Field) FieldType(field) {
             return self.vec.getLeaf(i).getUnwrap().getField(i % VecT.width, field);
         }
 
-        pub fn toIter(self: Self) Iterator {
-            return Iterator.init(self);
+        pub fn toIter(self: Self) VecT.Iterator {
+            return VecT.Iterator.init(self.vec);
         }
 
         pub fn toFieldIter(self: Self, comptime field: Field) IteratorField(field) {
             return IteratorField(field).init(self);
         }
-
-        pub const Iterator = struct {
-            multi_pvec: Self,
-            leaf: MultiIVector(T),
-            index: usize = 0,
-
-            pub fn init(vec: Self) Iterator {
-                return .{
-                    .multi_pvec = vec,
-                    .leaf = undefined,
-                };
-            }
-
-            pub fn next(iter: *Iterator) ?T {
-                if (iter.index == iter.multi_pvec.vec.len) {
-                    return null;
-                }
-
-                if (iter.index % VecT.width == 0) {
-                    iter.leaf = iter.multi_pvec.vec.getLeaf(iter.index).getUnwrap();
-                }
-
-                const val = iter.leaf.get(iter.index % VecT.width);
-                iter.index += 1;
-                return val;
-            }
-        };
 
         pub fn IteratorField(comptime field: Field) type {
             return struct {
@@ -459,7 +476,7 @@ pub fn MultiPVector(comptime T: type) type {
                 }
 
                 pub fn next(iter: *IteratorField(field)) ?FieldType(field) {
-                    if (iter.index == iter.multi_pvec.vec.len) {
+                    if (iter.index >= iter.multi_pvec.vec.len) {
                         return null;
                     }
 
@@ -470,6 +487,27 @@ pub fn MultiPVector(comptime T: type) type {
                     const val = iter.leaf.getField(iter.index % VecT.width, field);
                     iter.index += 1;
                     return val;
+                }
+
+                pub fn head(iter: IteratorField(field)) FieldType(field) {
+                    if (iter.index >= iter.vec.len) {
+                        return null;
+                    }
+
+                    return iter.multi_pvec.getField(iter.index, field);
+                }
+
+                pub fn tail(iter: IteratorField(field)) IteratorField(field) {
+                    const leaf = if (iter.index < iter.multi_pvec.vec.len - 1)
+                        iter.multi_pvec.vec.getLeaf(iter.index + 1).getUnwrap()
+                    else
+                        undefined;
+
+                    return .{
+                        .index = iter.index + 1,
+                        .multi_pvec = iter.multi_pvec,
+                        .leaf = leaf,
+                    };
                 }
             };
         }
