@@ -28,6 +28,11 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             collision: HashCollisionNode,
         };
 
+        const KV = struct {
+            key: K,
+            value: V,
+        };
+
         const Self = @This();
 
         const SearchResult = struct {
@@ -50,44 +55,23 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             };
         }
 
-        fn searchRecursive(table: *Table, key: V, depth: usize) SearchResult {
-            const shift: u5 = @intCast(bits * depth);
-            const expected_index = (context.hash(key) >> shift) & bit_mask;
-            if (!table.hasIndex(@intCast(expected_index))) {
-                return .{
-                    .status = .not_found,
-                    .anchor = table,
-                    .value = null,
-                    .depth = depth,
-                };
-            }
-
-            const pos = Table.getPos(@intCast(expected_index), table.index);
-            const next = &table.ptr[pos];
-            switch (next.*) {
-                .leaf => |*leaf| {
-                    const status: SearchResult.Status = switch (leaf.*) {
-                        .kv => |*kv| if (context.eql(key, kv.key)) .success else .key_mismatch,
-                        .collision => |col| if (col.find(key)) |_| .success else .key_mismatch,
-                    };
-
-                    return .{
-                        .status = status,
-                        .anchor = table,
-                        .value = leaf,
-                        .depth = depth,
-                    };
+        pub fn get(self: *Self, key: K) ?V {
+            const search_res = self.root.searchRecursive(key, 0);
+            return switch (search_res.status) {
+                .success => switch (search_res.value.?.*) {
+                    .kv => |kv| kv.value,
+                    .collision => |col| col.find(key),
                 },
-                .table => |*t| return searchRecursive(t, key, depth + 1),
-            }
+                else => null,
+            };
         }
 
-        pub fn get(self: *Self, key: K) SearchResult {
-            return searchRecursive(&self.root, key, 0);
+        pub fn getSearch(self: *Self, key: K) SearchResult {
+            return self.root.searchRecursive(key, 0);
         }
 
-        pub fn set(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !void {
-            const search_res = self.get(key);
+        pub fn assoc(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !void {
+            const search_res = self.getSearch(key);
             switch (search_res.status) {
                 .success => {
                     switch (search_res.value.?.*) {
@@ -112,10 +96,32 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             }
         }
 
-        const KV = struct {
-            key: K,
-            value: V,
-        };
+        pub fn dissoc(self: *Self, gpa: std.mem.Allocator, key: K) !void {
+            const search_res = self.getSearch(key);
+            if (search_res.status != .success) {
+                return;
+            }
+
+            const shift: u5 = @intCast(width * search_res.depth);
+            const index: u5 = @intCast((context.hash(key) >> shift) & bit_mask);
+            const pos = Table.getPos(index, search_res.anchor.index);
+            switch (search_res.value.?.*) {
+                .kv => {
+                    try search_res.anchor.shrink(gpa, index, pos);
+                },
+                .collision => |*col| {
+                    col.dissocMut(key);
+
+                    if (col.bucket.count() == 0) {
+                        try search_res.anchor.shrink(gpa, index, pos);
+                    } else if (col.bucket.count() == 1) {
+                        const first = col.bucket.entries.get(0);
+                        search_res.anchor.ptr[pos] = .{ .leaf = .{ .kv = .{ .key = first.key, .value = first.value } } };
+                    }
+                },
+            }
+            self.size -= 1;
+        }
 
         const Table = struct {
             ptr: []Node,
@@ -126,6 +132,38 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                     .ptr = &.{},
                     .index = 0,
                 };
+            }
+
+            fn searchRecursive(table: *Table, key: V, depth: usize) SearchResult {
+                const shift: u5 = @intCast(bits * depth);
+                const expected_index = (context.hash(key) >> shift) & bit_mask;
+                if (!table.hasIndex(@intCast(expected_index))) {
+                    return .{
+                        .status = .not_found,
+                        .anchor = table,
+                        .value = null,
+                        .depth = depth,
+                    };
+                }
+
+                const pos = Table.getPos(@intCast(expected_index), table.index);
+                const next = &table.ptr[pos];
+                switch (next.*) {
+                    .leaf => |*leaf| {
+                        const status: SearchResult.Status = switch (leaf.*) {
+                            .kv => |*kv| if (context.eql(key, kv.key)) .success else .key_mismatch,
+                            .collision => |col| if (col.find(key)) |_| .success else .key_mismatch,
+                        };
+
+                        return .{
+                            .status = status,
+                            .anchor = table,
+                            .value = leaf,
+                            .depth = depth,
+                        };
+                    },
+                    .table => |*t| return searchRecursive(t, key, depth + 1),
+                }
             }
 
             /// Returns the dense index from the sparse index.
@@ -160,8 +198,8 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
 
                 const new_table_ptr = try gpa.alloc(Node, table.ptr.len - 1);
 
-                @memcpy(new_table_ptr, table.ptr[0..pos]);
-                @memcpy(new_table_ptr.ptr[pos + 1], table.ptr[pos..]);
+                @memcpy(new_table_ptr[0..pos], table.ptr[0..pos]);
+                @memcpy(new_table_ptr[pos..], table.ptr[pos + 1 ..]);
 
                 gpa.free(table.ptr);
                 table.ptr = new_table_ptr;
@@ -256,7 +294,7 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
 
         /// Handles the case where two different keys have the exact same hash.
         /// Stores a simple list of (key, value) tuples.
-        const HashCollisionNode = struct {
+        pub const HashCollisionNode = struct {
             bucket: Bucket,
             const Bucket = std.ArrayHashMapUnmanaged(K, V, HashCollisionContext, false);
 
@@ -269,11 +307,11 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 }
             };
 
-            fn init() HashCollisionNode {
+            pub fn init() HashCollisionNode {
                 return .{ .bucket = .empty };
             }
 
-            fn initWithBucket(bucket: Bucket) HashCollisionNode {
+            pub fn initWithBucket(bucket: Bucket) HashCollisionNode {
                 return .{
                     .bucket = bucket,
                 };
@@ -283,14 +321,18 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 return self.bucket.get(key);
             }
 
-            fn assoc(self: HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !Self {
+            pub fn assoc(self: HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !Self {
                 const bucket = try self.bucket.clone(gpa);
                 var node = HashCollisionNode.initWithBucket(bucket);
                 try node.assocMut(gpa, key, value);
                 return node;
             }
 
-            fn assocMut(self: *HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !void {
+            pub fn dissocMut(self: *HashCollisionNode, key: K) void {
+                _ = self.bucket.swapRemove(key);
+            }
+
+            pub fn assocMut(self: *HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !void {
                 try self.bucket.put(gpa, key, value);
             }
         };

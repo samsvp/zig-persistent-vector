@@ -61,29 +61,28 @@ test "hamt manual insert and search" {
     // --- VERIFICATION ---
 
     // Test 1: Find Key 10
-    const res10 = hamt.get(10);
+    const res10 = hamt.getSearch(10);
     try std.testing.expectEqual(res10.status, .success);
     // FIX: Access .kv.value
     try std.testing.expectEqual(100, res10.value.?.kv.value);
 
     // Test 2: Find Key 11
-    const res11 = hamt.get(11);
+    const res11 = hamt.getSearch(11);
     try std.testing.expectEqual(res11.status, .success);
     try std.testing.expectEqual(111, res11.value.?.kv.value);
 
     // Test 3: Key Mismatch
-    const res20 = hamt.get(20);
+    const res20 = hamt.getSearch(20);
     try std.testing.expectEqual(res20.status, .key_mismatch);
 
     // Test 4: Not Found
-    const res5 = hamt.get(5);
+    const res5 = hamt.getSearch(5);
     try std.testing.expectEqual(res5.status, .not_found);
 
     // Test 5: Update (using high-level API)
-    try hamt.set(allocator, 10, 15);
+    try hamt.assoc(allocator, 10, 15);
     const res10_2 = hamt.get(10);
-    try std.testing.expectEqual(res10_2.status, .success);
-    try std.testing.expectEqual(15, res10_2.value.?.kv.value);
+    try std.testing.expectEqual(15, res10_2.?);
 }
 
 test "hamt: sparse insertion stress check" {
@@ -95,14 +94,14 @@ test "hamt: sparse insertion stress check" {
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
     defer allocator.free(hamt.root.ptr);
 
-    try hamt.set(allocator, 1, 10);
-    try hamt.set(allocator, 3, 30);
-    try hamt.set(allocator, 5, 50);
+    try hamt.assoc(allocator, 1, 10);
+    try hamt.assoc(allocator, 3, 30);
+    try hamt.assoc(allocator, 5, 50);
 
     // Verify all
-    try std.testing.expectEqual(10, hamt.get(1).value.?.kv.value);
-    try std.testing.expectEqual(30, hamt.get(3).value.?.kv.value);
-    try std.testing.expectEqual(50, hamt.get(5).value.?.kv.value);
+    try std.testing.expectEqual(10, hamt.get(1).?);
+    try std.testing.expectEqual(30, hamt.get(3).?);
+    try std.testing.expectEqual(50, hamt.get(5).?);
 
     // Internals Check:
     // Bitmap ...101010 = 42
@@ -122,21 +121,15 @@ test "hamt: collision handling (push down)" {
 
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
 
-    // Insert Key 10 (Hash 0)
-    try hamt.set(allocator, 10, 100);
-
-    // Insert Key 20 (Hash 0) -> COLLISION at Root
-    // This should trigger 'replace_kv_with_table'
-    try hamt.set(allocator, 20, 200);
+    try hamt.assoc(allocator, 10, 100);
+    try hamt.assoc(allocator, 20, 200);
 
     // 1. Verify both values exist
     const res10 = hamt.get(10);
-    try std.testing.expectEqual(res10.status, .success);
-    try std.testing.expectEqual(100, res10.value.?.collision.find(10).?);
+    try std.testing.expectEqual(100, res10.?);
 
     const res20 = hamt.get(20);
-    try std.testing.expectEqual(res20.status, .success);
-    try std.testing.expectEqual(200, res20.value.?.collision.find(20).?);
+    try std.testing.expectEqual(200, res20.?);
 
     // 2. Verify Structural Change (Whitebox)
     // The root should only have 1 entry (index 0)
@@ -148,4 +141,81 @@ test "hamt: collision handling (push down)" {
         .table => {}, // OK
         .leaf => return error.ExpectedTableNode,
     }
+}
+
+test "hamt: dissoc basic kv (leaf removal)" {
+    const std = @import("std");
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer allocator.free(hamt.root.ptr);
+
+    try hamt.root.extend(allocator, 0, 0);
+    hamt.root.ptr[0] = .{ .leaf = .{ .kv = .{ .key = 10, .value = 100 } } };
+    hamt.size = 1;
+
+    try hamt.dissoc(allocator, 10);
+
+    // Assert
+    try std.testing.expectEqual(hamt.getSearch(10).status, .not_found);
+    try std.testing.expectEqual(@as(usize, 0), hamt.size);
+    try std.testing.expectEqual(@as(u32, 0), hamt.root.index); // Table should be empty
+}
+
+test "hamt: dissoc from collision (reduction logic)" {
+    const std = @import("std");
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer allocator.free(hamt.root.ptr);
+
+    // Setup: Create a collision node manually at Index 0 (Hash 0)
+    // Key 10 (Hash 0) and Key 20 (Hash 0)
+    var col = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).HashCollisionNode.init();
+    try col.assocMut(allocator, 10, 100);
+    try col.assocMut(allocator, 20, 200);
+
+    try hamt.root.extend(allocator, 0, 0);
+    hamt.root.ptr[0] = .{ .leaf = .{ .collision = col } };
+    hamt.size = 2;
+
+    switch (hamt.root.ptr[0].leaf) {
+        .collision => {},
+        .kv => return error.TestSetupFailed,
+    }
+
+    try hamt.dissoc(allocator, 10);
+
+    // Assert 1: Key 10 gone, Key 20 exists
+    try std.testing.expectEqual(hamt.getSearch(10).status, .key_mismatch);
+    const res20 = hamt.getSearch(20);
+    try std.testing.expectEqual(res20.status, .success);
+    try std.testing.expectEqual(200, res20.value.?.kv.value); // Must access via .kv now!
+
+    // Assert 2: Structural Check (The Optimization)
+    // The node at root index 0 must now be .kv, NOT .collision
+    switch (hamt.root.ptr[0].leaf) {
+        .kv => {}, // Success: Converted back to simple leaf
+        .collision => return error.OptimizationFailed, // Fail: Still a bucket
+    }
+}
+
+test "hamt: dissoc non-existent key" {
+    const std = @import("std");
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer allocator.free(hamt.root.ptr);
+
+    try hamt.root.extend(allocator, 0, 0);
+    hamt.root.ptr[0] = .{ .leaf = .{ .kv = .{ .key = 10, .value = 100 } } };
+    hamt.size = 1;
+
+    try hamt.dissoc(allocator, 99);
+
+    try std.testing.expectEqual(hamt.getSearch(10).status, .success);
+    try std.testing.expectEqual(@as(usize, 1), hamt.size);
 }
