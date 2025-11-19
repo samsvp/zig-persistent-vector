@@ -50,10 +50,10 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             };
         }
 
-        fn search_recursive(table: *Table, key: V, depth: usize) SearchResult {
+        fn searchRecursive(table: *Table, key: V, depth: usize) SearchResult {
             const shift: u5 = @intCast(bits * depth);
             const expected_index = (context.hash(key) >> shift) & bit_mask;
-            if (!table.has_index(@intCast(expected_index))) {
+            if (!table.hasIndex(@intCast(expected_index))) {
                 return .{
                     .status = .not_found,
                     .anchor = table,
@@ -78,12 +78,12 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                         .depth = depth,
                     };
                 },
-                .table => |*t| return search_recursive(t, key, depth + 1),
+                .table => |*t| return searchRecursive(t, key, depth + 1),
             }
         }
 
         pub fn get(self: *Self, key: K) SearchResult {
-            return search_recursive(&self.root, key, 0);
+            return searchRecursive(&self.root, key, 0);
         }
 
         pub fn set(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !void {
@@ -134,7 +134,7 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             }
 
             /// Returns if the table has a child at the given index.
-            pub fn has_index(table: Table, index: u5) bool {
+            pub fn hasIndex(table: Table, index: u5) bool {
                 return (table.index & (@as(u32, 1) << index)) > 0;
             }
 
