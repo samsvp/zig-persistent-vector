@@ -256,44 +256,43 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
 
         /// Handles the case where two different keys have the exact same hash.
         /// Stores a simple list of (key, value) tuples.
-        const HashCollisionNode =
-            struct {
-                bucket: Bucket,
-                const Bucket = std.ArrayHashMapUnmanaged(K, V, HashCollisionContext, false);
+        const HashCollisionNode = struct {
+            bucket: Bucket,
+            const Bucket = std.ArrayHashMapUnmanaged(K, V, HashCollisionContext, false);
 
-                const HashCollisionContext = struct {
-                    pub fn hash(_: @This(), _: K) u32 {
-                        return 0;
-                    }
-                    pub fn eql(_: @This(), a: K, b: K, _: usize) bool {
-                        return context.eql(a, b);
-                    }
-                };
-
-                fn init() HashCollisionNode {
-                    return .{ .bucket = .empty };
+            const HashCollisionContext = struct {
+                pub fn hash(_: @This(), _: K) u32 {
+                    return 0;
                 }
-
-                fn initWithBucket(bucket: Bucket) HashCollisionNode {
-                    return .{
-                        .bucket = bucket,
-                    };
-                }
-
-                pub fn find(self: HashCollisionNode, key: K) ?V {
-                    return self.bucket.get(key);
-                }
-
-                fn assoc(self: HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !Self {
-                    const bucket = try self.bucket.clone(gpa);
-                    var node = HashCollisionNode.initWithBucket(bucket);
-                    try node.assocMut(gpa, key, value);
-                    return node;
-                }
-
-                fn assocMut(self: *HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !void {
-                    try self.bucket.put(gpa, key, value);
+                pub fn eql(_: @This(), a: K, b: K, _: usize) bool {
+                    return context.eql(a, b);
                 }
             };
+
+            fn init() HashCollisionNode {
+                return .{ .bucket = .empty };
+            }
+
+            fn initWithBucket(bucket: Bucket) HashCollisionNode {
+                return .{
+                    .bucket = bucket,
+                };
+            }
+
+            pub fn find(self: HashCollisionNode, key: K) ?V {
+                return self.bucket.get(key);
+            }
+
+            fn assoc(self: HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !Self {
+                const bucket = try self.bucket.clone(gpa);
+                var node = HashCollisionNode.initWithBucket(bucket);
+                try node.assocMut(gpa, key, value);
+                return node;
+            }
+
+            fn assocMut(self: *HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !void {
+                try self.bucket.put(gpa, key, value);
+            }
+        };
     };
 }
