@@ -171,7 +171,7 @@ test "hamt: collision handling" {
     try std.testing.expect(h.get("col2") != null);
 }
 
-test "persistent hamt: collision handling" {
+test "persistent hamt: collision handling 2" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -232,4 +232,75 @@ test "persistent hamt: collision handling" {
     try std.testing.expectEqual(100.0, h4.get("col3").?.items[0]);
     try std.testing.expectEqual(100.0, h5.get("col3").?.items[0]);
     try std.testing.expectEqual(150.0, h5.get("col2").?.items[0]);
+}
+
+test "persistent hamt: collision handling" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Force collisions (Hash is always 0)
+    const BadHashCtx = HashContext(K){
+        .eql = strEql,
+        .hash = struct {
+            fn h(_: K) u32 {
+                return 0;
+            }
+        }.h,
+    };
+    const BadHamt = Hamt(K, V, BadHashCtx, MyKVCtx);
+
+    var h0 = BadHamt.init();
+    defer h0.deinit(allocator);
+
+    var list100 = FloatList{};
+    defer list100.deinit(allocator);
+    try list100.append(allocator, 100.0);
+
+    var list150 = FloatList{};
+    defer list150.deinit(allocator);
+    try list150.append(allocator, 150.0);
+
+    var h1 = try h0.assoc(allocator, "col1", list100);
+    defer h1.deinit(allocator);
+
+    var h2 = try h1.assoc(allocator, "col1", list150);
+    defer h2.deinit(allocator);
+
+    var h3 = try h2.assoc(allocator, "col2", list100);
+    defer h3.deinit(allocator);
+
+    var h4 = try h3.assoc(allocator, "col3", list100);
+    defer h4.deinit(allocator);
+
+    var h5 = try h4.assoc(allocator, "col2", list150);
+    defer h5.deinit(allocator);
+
+    try std.testing.expectEqual(100.0, h1.get("col1").?.items[0]);
+    try std.testing.expect(h1.get("col2") == null);
+
+    try std.testing.expectEqual(150.0, h2.get("col1").?.items[0]);
+    try std.testing.expect(h2.get("col2") == null);
+
+    try std.testing.expectEqual(150.0, h3.get("col1").?.items[0]);
+    try std.testing.expectEqual(100.0, h3.get("col2").?.items[0]);
+
+    try std.testing.expectEqual(150.0, h4.get("col1").?.items[0]);
+    try std.testing.expectEqual(100.0, h4.get("col2").?.items[0]);
+    try std.testing.expectEqual(100.0, h4.get("col3").?.items[0]);
+
+    try std.testing.expectEqual(150.0, h5.get("col1").?.items[0]);
+    try std.testing.expectEqual(150.0, h5.get("col2").?.items[0]);
+    try std.testing.expectEqual(100.0, h5.get("col3").?.items[0]);
+
+    var h6 = try h5.dissoc(allocator, "col1");
+    defer h6.deinit(allocator);
+
+    try std.testing.expect(h6.get("col1") == null);
+    try std.testing.expectEqual(150.0, h6.get("col2").?.items[0]);
+    try std.testing.expectEqual(100.0, h6.get("col3").?.items[0]);
+
+    try std.testing.expectEqual(150.0, h5.get("col1").?.items[0]);
+    try std.testing.expectEqual(150.0, h5.get("col2").?.items[0]);
+    try std.testing.expectEqual(100.0, h5.get("col3").?.items[0]);
 }
