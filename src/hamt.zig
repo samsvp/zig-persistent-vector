@@ -199,23 +199,22 @@ pub fn Hamt(
             switch (next_node.kind) {
                 .leaf => |*leaf| {
                     const found = switch (leaf.*) {
-                        .kv => |*other_kv| hash_context.eql(kv.key, other_kv.key),
-                        .collision => |col| col.contains(kv.key),
+                        .collision => |*col| try col.assoc(gpa, kv),
+                        .kv => |*other_kv| blk: {
+                            const found = hash_context.eql(kv.key, other_kv.key);
+                            if (found) {
+                                try table.insertKV(gpa, kv, expected_index);
+                            } else {
+                                const preserved_kv = try kv_context.clone(gpa, other_kv);
+                                try table.insertTable(gpa, preserved_kv, kv, depth);
+                            }
+                            break :blk found;
+                        },
                     };
 
-                    if (found) {
-                        try table.insertKV(gpa, kv, expected_index);
-                        return;
+                    if (!found) {
+                        self.size += 1;
                     }
-
-                    switch (leaf.*) {
-                        .collision => |*col| try col.assoc(gpa, kv),
-                        .kv => |*other_kv| {
-                            const preserved_kv = try kv_context.clone(gpa, other_kv);
-                            try table.insertTable(gpa, preserved_kv, kv, depth);
-                        },
-                    }
-                    self.size += 1;
                 },
                 .table => |*t| {
                     return self.assocRecursive(gpa, t, kv, depth + 1, should_clone);
@@ -375,8 +374,8 @@ pub fn Hamt(
             pub fn createPath(gpa: std.mem.Allocator, other_kv: KV(K, V), kv: KV(K, V), depth: usize) !NodeRef {
                 if (depth >= 5) {
                     var collision = HashCollisionNode.init();
-                    try collision.assoc(gpa, kv);
-                    try collision.assoc(gpa, other_kv);
+                    _ = try collision.assoc(gpa, kv);
+                    _ = try collision.assoc(gpa, other_kv);
 
                     const node_ptr = try gpa.create(Node);
                     node_ptr.* = Node{ .kind = .{ .leaf = .{ .collision = collision } } };
@@ -514,8 +513,20 @@ pub fn Hamt(
                 }
             }
 
-            pub fn assoc(self: *HashCollisionNode, gpa: std.mem.Allocator, kv: KV(K, V)) !void {
+            pub fn assoc(self: *HashCollisionNode, gpa: std.mem.Allocator, kv: KV(K, V)) !bool {
+                const found = for (0..self.bucket.items.len) |i| {
+                    const other_kv = &self.bucket.items[i];
+                    if (!hash_context.eql(other_kv.key, kv.key)) {
+                        continue;
+                    }
+                    kv_context.deinit(gpa, other_kv);
+                    _ = self.bucket.swapRemove(i);
+                    break true;
+                } else false;
+
                 try self.bucket.append(gpa, kv);
+
+                return found;
             }
         };
     };
