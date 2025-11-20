@@ -1,9 +1,9 @@
 const std = @import("std");
-const IVector = @import("ivector.zig").IVector;
-const MultiIVector = @import("ivector.zig").MultiIVector;
-const PVector = @import("pvector.zig").PVector;
-const MultiPVector = @import("pvector.zig").MultiPVector;
-const RefCounter = @import("ref_counter.zig").RefCounter;
+const IVector = @import("../ivector.zig").IVector;
+const MultiIVector = @import("../ivector.zig").MultiIVector;
+const PVector = @import("../pvector.zig").PVector;
+const MultiPVector = @import("../pvector.zig").MultiPVector;
+const RefCounter = @import("../ref_counter.zig").RefCounter;
 
 test "multi ivector" {
     var gpa = std.heap.DebugAllocator(.{}){};

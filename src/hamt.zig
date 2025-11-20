@@ -2,6 +2,8 @@
 const std = @import("std");
 const config = @import("config");
 
+const RefCounter = @import("ref_counter.zig").RefCounter;
+
 pub const bits = 5;
 pub const width = 1 << bits;
 const bit_mask = width - 1;
@@ -18,13 +20,39 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
         root: Table,
         size: usize,
 
-        const Node = union(enum) {
+        const NodeRef = RefCounter(*Node).Ref;
+
+        const Node = struct {
+            kind: NodeKind,
+
+            pub fn deinit(self: *Node, gpa: std.mem.Allocator) void {
+                self.kind.deinit(gpa);
+                gpa.destroy(self);
+            }
+
+            pub fn clone(self: *Node, gpa: std.mem.Allocator) !NodeRef {
+                const new_node_ptr = try gpa.create(Node);
+                new_node_ptr.* = .{
+                    .kind = try self.kind.clone(gpa),
+                };
+                return RefCounter(*Node).init(gpa, new_node_ptr);
+            }
+        };
+
+        const NodeKind = union(enum) {
             leaf: Leaf,
             table: Table,
 
-            pub fn clone(self: *Node, gpa: std.mem.Allocator) !Node {
+            pub fn deinit(self: *NodeKind, gpa: std.mem.Allocator) void {
+                switch (self.*) {
+                    .leaf => |*l| l.deinit(gpa),
+                    .table => |*t| t.deinit(gpa),
+                }
+            }
+
+            pub fn clone(self: *NodeKind, gpa: std.mem.Allocator) !NodeKind {
                 return switch (self.*) {
-                    .leaf => |*leaf| .{ .leaf = try leaf.clone(gpa) },
+                    .leaf => |*l| .{ .leaf = try l.clone(gpa) },
                     .table => |*t| .{ .table = try t.clone(gpa) },
                 };
             }
@@ -33,6 +61,13 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
         const Leaf = union(enum) {
             kv: KV,
             collision: HashCollisionNode,
+
+            pub fn deinit(self: *Leaf, gpa: std.mem.Allocator) void {
+                switch (self.*) {
+                    .kv => {},
+                    .collision => |*col| col.deinit(gpa),
+                }
+            }
 
             pub fn clone(leaf: *Leaf, gpa: std.mem.Allocator) !Leaf {
                 return switch (leaf.*) {
@@ -54,6 +89,10 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 .root = Table.init(),
                 .size = 0,
             };
+        }
+
+        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+            self.root.deinit(gpa);
         }
 
         pub fn get(self: *Self, key: K) ?V {
@@ -107,10 +146,14 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
 
             const pos = Table.getPos(@intCast(expected_index), table.index);
             if (should_clone) {
-                table.ptr[pos] = try table.ptr[pos].clone(gpa);
+                var old_ref = table.ptr[pos];
+                table.ptr[pos] = try old_ref.getUnwrap().clone(gpa);
+                old_ref.release(gpa);
             }
-            const next = &table.ptr[pos];
-            switch (next.*) {
+            var next_ref = table.ptr[pos];
+            var next_node = next_ref.getUnwrap();
+
+            switch (next_node.kind) {
                 .leaf => |*leaf| {
                     const found = switch (leaf.*) {
                         .kv => |*kv| context.eql(key, kv.key),
@@ -129,11 +172,7 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                     self.size += 1;
                 },
                 .table => |*t| {
-                    if (should_clone) {
-                        const new_table = try t.clone(gpa);
-                        table.ptr[pos] = .{ .table = new_table };
-                    }
-                    return self.assocRecursive(gpa, &table.ptr[pos].table, key, value, depth + 1, should_clone);
+                    return self.assocRecursive(gpa, t, key, value, depth + 1, should_clone);
                 },
             }
         }
@@ -155,11 +194,14 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             const pos = Table.getPos(@intCast(expected_index), table.index);
 
             if (should_clone) {
-                table.ptr[pos] = try table.ptr[pos].clone(gpa);
+                var old_ref = table.ptr[pos];
+                table.ptr[pos] = try old_ref.getUnwrap().clone(gpa);
+                old_ref.release(gpa);
             }
+            var next_ref = table.ptr[pos];
+            var next_node = next_ref.getUnwrap();
 
-            const next = &table.ptr[pos];
-            switch (next.*) {
+            switch (next_node.kind) {
                 .leaf => |*leaf| {
                     switch (leaf.*) {
                         .kv => try table.shrink(gpa, expected_index, pos),
@@ -169,8 +211,9 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                             if (col.bucket.count() == 0) {
                                 try table.shrink(gpa, expected_index, pos);
                             } else if (col.bucket.count() == 1) {
-                                const first = col.bucket.entries.get(0);
-                                table.ptr[pos] = .{ .leaf = .{ .kv = .{ .key = first.key, .value = first.value } } };
+                                const k = col.bucket.keys()[0];
+                                const v = col.bucket.values()[0];
+                                try table.insertKV(gpa, k, v, expected_index);
                             }
                         },
                     }
@@ -189,7 +232,7 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
         }
 
         const Table = struct {
-            ptr: []Node,
+            ptr: []NodeRef,
             index: u32,
 
             pub fn init() Table {
@@ -197,6 +240,13 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                     .ptr = &.{},
                     .index = 0,
                 };
+            }
+
+            pub fn deinit(self: *Table, gpa: std.mem.Allocator) void {
+                for (self.ptr) |*ref| {
+                    ref.release(gpa);
+                }
+                gpa.free(self.ptr);
             }
 
             fn searchRecursive(table: *Table, key: V, depth: usize) ?V {
@@ -207,8 +257,8 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 }
 
                 const pos = Table.getPos(@intCast(expected_index), table.index);
-                const next = &table.ptr[pos];
-                return switch (next.*) {
+                const next_node = table.ptr[pos].getUnwrap();
+                return switch (next_node.kind) {
                     .leaf => |*leaf| switch (leaf.*) {
                         .kv => |*kv| if (context.eql(key, kv.key)) kv.value else null,
                         .collision => |col| col.bucket.get(key),
@@ -218,19 +268,16 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 };
             }
 
-            /// Returns the dense index from the sparse index.
             pub fn getPos(sparse_index: u5, bitmap: u32) usize {
                 return @popCount(bitmap & ((@as(u32, 1) << sparse_index) - 1));
             }
 
-            /// Returns if the table has a child at the given index.
             pub fn hasIndex(table: Table, index: u5) bool {
                 return (table.index & (@as(u32, 1) << index)) > 0;
             }
 
-            /// Adds one row to the table at the given position `pos`.
             pub fn extend(table: *Table, gpa: std.mem.Allocator, index: u5, pos: usize) !void {
-                const new_table_ptr = try gpa.alloc(Node, table.ptr.len + 1);
+                const new_table_ptr = try gpa.alloc(NodeRef, table.ptr.len + 1);
                 if (table.ptr.len > 0) {
                     @memcpy(new_table_ptr[0..pos], table.ptr[0..pos]);
                     @memcpy(new_table_ptr[pos + 1 ..], table.ptr[pos..]);
@@ -241,14 +288,16 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 table.index |= (@as(u32, 1) << index);
             }
 
-            /// Removes the row at `pos` from the table.
             pub fn shrink(table: *Table, gpa: std.mem.Allocator, index: u5, pos: usize) !void {
                 if (table.ptr.len == 0) {
                     gpa.free(table.ptr);
                     return;
                 }
 
-                const new_table_ptr = try gpa.alloc(Node, table.ptr.len - 1);
+                var node_to_remove = table.ptr[pos];
+                node_to_remove.release(gpa);
+
+                const new_table_ptr = try gpa.alloc(NodeRef, table.ptr.len - 1);
 
                 @memcpy(new_table_ptr[0..pos], table.ptr[0..pos]);
                 @memcpy(new_table_ptr[pos..], table.ptr[pos + 1 ..]);
@@ -258,69 +307,85 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 table.index &= ~(@as(u32, 1) << index);
             }
 
-            /// Converts a table into a leaf (key/value) node.
-            pub fn gather(table: *Table, gpa: std.mem.Allocator, pos: usize) !KV {
-                const kv: KV = .{
-                    .key = table.ptr[pos].kv.key,
-                    .value = table.ptr[pos].kv.value,
-                };
-                gpa.free(table.ptr);
-                return kv;
-            }
-
             pub fn insertKV(table: *Table, gpa: std.mem.Allocator, key: K, value: V, index: u5) !void {
                 const new_idx = table.index | (@as(u32, 1) << index);
                 const pos = getPos(index, new_idx);
 
-                try table.extend(gpa, index, pos);
-                table.ptr[pos] = .{
-                    .leaf = .{
-                        .kv = .{ .key = key, .value = value },
+                if (table.hasIndex(index)) {
+                    table.ptr[pos].release(gpa);
+                } else {
+                    try table.extend(gpa, index, pos);
+                }
+
+                const new_node_ptr = try gpa.create(Node);
+                new_node_ptr.* = Node{
+                    .kind = .{
+                        .leaf = .{
+                            .kv = .{ .key = key, .value = value },
+                        },
                     },
                 };
+
+                table.ptr[pos] = try RefCounter(*Node).init(gpa, new_node_ptr);
             }
 
-            pub fn createPath(gpa: std.mem.Allocator, kv: KV, key: K, value: V, depth: usize) !Node {
+            pub fn createPath(gpa: std.mem.Allocator, kv: KV, key: K, value: V, depth: usize) !NodeRef {
                 if (depth >= 5) {
                     var collision = HashCollisionNode.init();
                     try collision.assoc(gpa, key, value);
                     try collision.assoc(gpa, kv.key, kv.value);
-                    return .{ .leaf = .{ .collision = collision } };
+
+                    const node_ptr = try gpa.create(Node);
+                    node_ptr.* = Node{ .kind = .{ .leaf = .{ .collision = collision } } };
+                    return RefCounter(*Node).init(gpa, node_ptr);
                 }
 
                 const shift: u5 = @intCast(bits * depth);
                 const new_key_index: u5 = @intCast((context.hash(key) >> shift) & bit_mask);
                 const curr_key_index: u5 = @intCast((context.hash(kv.key) >> shift) & bit_mask);
 
-                // hash collision
                 if (new_key_index == curr_key_index) {
-                    const next_node = try createPath(gpa, kv, key, value, depth + 1);
+                    const next_node_ref = try createPath(gpa, kv, key, value, depth + 1);
 
-                    const new_ptr = try gpa.alloc(Node, 1);
-                    new_ptr[0] = next_node;
+                    const new_ptr = try gpa.alloc(NodeRef, 1);
+                    new_ptr[0] = next_node_ref;
 
-                    return Node{
-                        .table = .{
-                            .ptr = new_ptr,
-                            .index = (@as(u32, 1) << new_key_index),
+                    const table_node_ptr = try gpa.create(Node);
+                    table_node_ptr.* = Node{
+                        .kind = .{
+                            .table = .{
+                                .ptr = new_ptr,
+                                .index = (@as(u32, 1) << new_key_index),
+                            },
                         },
                     };
+                    return RefCounter(*Node).init(gpa, table_node_ptr);
                 }
 
-                const new_table: Table = .{
-                    .ptr = try gpa.alloc(Node, 2),
-                    .index = (@as(u32, 1) << new_key_index) | (@as(u32, 1) << curr_key_index),
+                const new_table_ptr = try gpa.alloc(NodeRef, 2);
+                const new_bitmap = (@as(u32, 1) << new_key_index) | (@as(u32, 1) << curr_key_index);
+
+                const new_key_pos = getPos(new_key_index, new_bitmap);
+                const curr_key_pos = getPos(curr_key_index, new_bitmap);
+
+                const node_key_ptr = try gpa.create(Node);
+                node_key_ptr.* = Node{ .kind = .{ .leaf = .{ .kv = .{ .key = key, .value = value } } } };
+                new_table_ptr[new_key_pos] = try RefCounter(*Node).init(gpa, node_key_ptr);
+
+                const node_kv_ptr = try gpa.create(Node);
+                node_kv_ptr.* = Node{ .kind = .{ .leaf = .{ .kv = kv } } };
+                new_table_ptr[curr_key_pos] = try RefCounter(*Node).init(gpa, node_kv_ptr);
+
+                const root_node_ptr = try gpa.create(Node);
+                root_node_ptr.* = Node{
+                    .kind = .{
+                        .table = .{
+                            .ptr = new_table_ptr,
+                            .index = new_bitmap,
+                        },
+                    },
                 };
-
-                const new_key_pos = getPos(new_key_index, new_table.index);
-                const curr_key_pos = getPos(curr_key_index, new_table.index);
-
-                new_table.ptr[new_key_pos] = .{ .leaf = .{ .kv = .{ .key = key, .value = value } } };
-                new_table.ptr[curr_key_pos] = .{ .leaf = .{ .kv = kv } };
-
-                return .{
-                    .table = new_table,
-                };
+                return RefCounter(*Node).init(gpa, root_node_ptr);
             }
 
             pub fn insertTable(table: *Table, gpa: std.mem.Allocator, kv: KV, key: K, value: V, depth: usize) !void {
@@ -328,24 +393,24 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 const index: u5 = @intCast((context.hash(kv.key) >> shift) & bit_mask);
                 const pos = getPos(index, table.index);
 
-                const new_node = try createPath(gpa, kv, key, value, depth + 1);
+                const new_node_ref = try createPath(gpa, kv, key, value, depth + 1);
 
-                table.ptr[pos] = new_node;
+                table.ptr[pos].release(gpa);
+                table.ptr[pos] = new_node_ref;
             }
 
-            /// clones the given table.
             pub fn clone(table: *Table, gpa: std.mem.Allocator) !Table {
-                const new_ptr = try gpa.dupe(Node, table.ptr);
-                const new_table: Table = .{
+                const new_ptr = try gpa.alloc(NodeRef, table.ptr.len);
+                for (table.ptr, 0..) |*ref, i| {
+                    new_ptr[i] = try ref.borrow();
+                }
+                return Table{
                     .ptr = new_ptr,
                     .index = table.index,
                 };
-                return new_table;
             }
         };
 
-        /// Handles the case where two different keys have the exact same hash.
-        /// Stores a simple list of (key, value) tuples.
         pub const HashCollisionNode = struct {
             bucket: Bucket,
             const Bucket = std.ArrayHashMapUnmanaged(K, V, HashCollisionContext, false);
@@ -361,6 +426,10 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
 
             pub fn init() HashCollisionNode {
                 return .{ .bucket = .empty };
+            }
+
+            pub fn deinit(self: *HashCollisionNode, gpa: std.mem.Allocator) void {
+                self.bucket.deinit(gpa);
             }
 
             pub fn initWithBucket(bucket: Bucket) HashCollisionNode {

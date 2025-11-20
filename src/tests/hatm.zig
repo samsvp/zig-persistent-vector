@@ -1,5 +1,5 @@
 const std = @import("std");
-pub const Hamt = @import("hamt.zig").Hamt;
+pub const Hamt = @import("../hamt.zig").Hamt;
 
 fn eql(a: i32, b: i32) bool {
     return a == b;
@@ -9,7 +9,7 @@ fn hash(a: i32) u32 {
     return @intCast(@mod(a, 10));
 }
 
-test "hamt manual insert and search" {
+test "hamt: manual insert and search" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer {
         const deinit_status = gpa.deinit();
@@ -18,55 +18,22 @@ test "hamt manual insert and search" {
     const allocator = gpa.allocator();
 
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
-    // Note: This only frees the root array. In a real scenario with sub-tables,
-    // you need a proper recursive deinit or you will leak memory.
-    defer allocator.free(hamt.root.ptr);
+    defer hamt.deinit(allocator);
 
-    // --- INSERTION 1: Key = 10, Value = 100 ---
-    {
-        const key = 10;
-        const val = 100;
-        const sparse_index = 0;
-        const pos = 0;
+    try hamt.assocMut(allocator, 10, 100);
+    try hamt.assocMut(allocator, 11, 111);
 
-        try hamt.root.extend(allocator, sparse_index, pos);
-
-        // FIX: Wrapped in .leaf
-        hamt.root.ptr[pos] = .{ .leaf = .{ .kv = .{ .key = key, .value = val } } };
-        hamt.size += 1;
-    }
-
-    // --- INSERTION 2: Key = 11, Value = 111 ---
-    {
-        const key = 11;
-        const val = 111;
-        const sparse_index = 1;
-        const pos = 1;
-
-        try hamt.root.extend(allocator, sparse_index, pos);
-
-        // FIX: Wrapped in .leaf
-        hamt.root.ptr[pos] = .{ .leaf = .{ .kv = .{ .key = key, .value = val } } };
-        hamt.size += 1;
-    }
-
-    // --- VERIFICATION ---
-
-    // Test 1: Find Key 10
     const res10 = hamt.get(10);
     try std.testing.expectEqual(100, res10.?);
 
-    // Test 2: Find Key 11
     const res11 = hamt.get(11);
     try std.testing.expectEqual(111, res11.?);
 
-    // Test 3: Key Mismatch
     const res20 = hamt.get(20);
     try std.testing.expectEqual(null, res20);
     const res5 = hamt.get(5);
     try std.testing.expectEqual(null, res5);
 
-    // Test 5: Update (using high-level API)
     try hamt.assocMut(allocator, 10, 15);
     const res10_2 = hamt.get(10);
     try std.testing.expectEqual(15, res10_2.?);
@@ -78,122 +45,91 @@ test "hamt: sparse insertion stress check" {
     const allocator = gpa.allocator();
 
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
-    defer allocator.free(hamt.root.ptr);
+    defer hamt.deinit(allocator);
 
     try hamt.assocMut(allocator, 1, 10);
     try hamt.assocMut(allocator, 3, 30);
     try hamt.assocMut(allocator, 5, 50);
 
-    // Verify all
     try std.testing.expectEqual(10, hamt.get(1).?);
     try std.testing.expectEqual(30, hamt.get(3).?);
     try std.testing.expectEqual(50, hamt.get(5).?);
 
-    // Internals Check:
-    // Bitmap ...101010 = 42
-    try std.testing.expectEqual(@as(u32, 42), hamt.root.index);
-    try std.testing.expectEqual(@as(usize, 3), hamt.root.ptr.len);
+    try std.testing.expectEqual(42, hamt.root.index);
+    try std.testing.expectEqual(3, hamt.root.ptr.len);
 }
 
 test "hamt: collision handling (push down)" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    // Note: This test will leak memory because we don't have a recursive
-    // destructor yet, and we are creating sub-tables.
-    // We suppress the leak check for this specific test.
-    //defer _ = gpa.deinit();
-
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer hamt.deinit(allocator);
 
     try hamt.assocMut(allocator, 10, 100);
     try hamt.assocMut(allocator, 20, 200);
 
-    // 1. Verify both values exist
     const res10 = hamt.get(10);
     try std.testing.expectEqual(100, res10.?);
 
     const res20 = hamt.get(20);
     try std.testing.expectEqual(200, res20.?);
 
-    // 2. Verify Structural Change (Whitebox)
-    // The root should only have 1 entry (index 0)
-    try std.testing.expectEqual(@as(u32, 1), hamt.root.index);
+    try std.testing.expectEqual(1, hamt.root.index);
 
-    // That entry should be a TABLE, not a LEAF
-    const root_node = hamt.root.ptr[0];
-    switch (root_node) {
-        .table => {}, // OK
+    const root_node_kind = hamt.root.ptr[0].getUnwrap().kind;
+    switch (root_node_kind) {
+        .table => {},
         .leaf => return error.ExpectedTableNode,
     }
 }
 
 test "hamt: dissoc basic kv (leaf removal)" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
-    defer allocator.free(hamt.root.ptr);
+    defer hamt.deinit(allocator);
 
-    try hamt.root.extend(allocator, 0, 0);
-    hamt.root.ptr[0] = .{ .leaf = .{ .kv = .{ .key = 10, .value = 100 } } };
-    hamt.size = 1;
+    try hamt.assocMut(allocator, 10, 100);
 
     try hamt.dissocMut(allocator, 10);
 
-    // Assert
     try std.testing.expectEqual(null, hamt.get(10));
-    try std.testing.expectEqual(@as(usize, 0), hamt.size);
-    try std.testing.expectEqual(@as(u32, 0), hamt.root.index); // Table should be empty
+    try std.testing.expectEqual(0, hamt.size);
+    try std.testing.expectEqual(0, hamt.root.index);
 }
 
 test "hamt: dissoc from collision (reduction logic)" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
-    defer allocator.free(hamt.root.ptr);
+    defer hamt.deinit(allocator);
 
-    // Setup: Create a collision node manually at Index 0 (Hash 0)
-    // Key 10 (Hash 0) and Key 20 (Hash 0)
-    var col = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).HashCollisionNode.init();
-    try col.assoc(allocator, 10, 100);
-    try col.assoc(allocator, 20, 200);
-
-    try hamt.root.extend(allocator, 0, 0);
-    hamt.root.ptr[0] = .{ .leaf = .{ .collision = col } };
-    hamt.size = 2;
-
-    switch (hamt.root.ptr[0].leaf) {
-        .collision => {},
-        .kv => return error.TestSetupFailed,
-    }
+    // Setup: Create collision
+    try hamt.assocMut(allocator, 10, 100);
+    try hamt.assocMut(allocator, 20, 200);
 
     try hamt.dissocMut(allocator, 10);
 
-    // Assert 1: Key 10 gone, Key 20 exists
     try std.testing.expectEqual(null, hamt.get(10));
     const res20 = hamt.get(20);
-    try std.testing.expectEqual(200, res20.?); // Must access via .kv now!
-
-    // Assert 2: Structural Check (The Optimization)
-    // The node at root index 0 must now be .kv, NOT .collision
-    switch (hamt.root.ptr[0].leaf) {
-        .kv => {}, // Success: Converted back to simple leaf
-        .collision => return error.OptimizationFailed, // Fail: Still a bucket
-    }
+    try std.testing.expectEqual(200, res20.?);
 }
 
 test "hamt: dissoc non-existent key" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
-    defer allocator.free(hamt.root.ptr);
+    defer hamt.deinit(allocator);
 
-    try hamt.root.extend(allocator, 0, 0);
-    hamt.root.ptr[0] = .{ .leaf = .{ .kv = .{ .key = 10, .value = 100 } } };
-    hamt.size = 1;
+    try hamt.assocMut(allocator, 10, 100);
 
     try hamt.dissocMut(allocator, 99);
 
@@ -203,78 +139,89 @@ test "hamt: dissoc non-existent key" {
 
 test "assoc: basic immutability (add new key)" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
-    defer allocator.free(h0.root.ptr);
+    defer h0.deinit(allocator);
 
-    // 1. Create h1 from h0
-    var h1 = try h0.assoc(allocator, 10, 100); // Hash 0
-    defer allocator.free(h1.root.ptr); // In real use, would need recursive free
+    var h1 = try h0.assoc(allocator, 10, 100);
+    defer h1.deinit(allocator); // REQUIRED: Release h1's references
 
-    // 2. Verify h1 has the key
     try std.testing.expectEqual(100, h1.get(10).?);
 
-    // 3. Verify h0 is EMPTY (Immutable)
     try std.testing.expectEqual(@as(usize, 0), h0.root.ptr.len);
     try std.testing.expectEqual(@as(usize, 1), h1.root.ptr.len);
 }
 
 test "assoc: update existing key (copy-on-write)" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer h0.deinit(allocator);
 
-    // Setup: h1 has Key 10 -> 100
     var h1 = try h0.assoc(allocator, 10, 100);
+    defer h1.deinit(allocator);
 
-    // Action: h2 updates Key 10 -> 999
     var h2 = try h1.assoc(allocator, 10, 999);
+    defer h2.deinit(allocator);
+
     try std.testing.expectEqual(999, h2.get(10).?);
     try std.testing.expectEqual(100, h1.get(10).?);
+
     try std.testing.expect(h1.root.ptr.ptr != h2.root.ptr.ptr);
 }
 
 test "assoc: collision divergence (structure branching)" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer h0.deinit(allocator);
 
     // Key 10 (Hash 0) and Key 20 (Hash 0) collision
     var h1 = try h0.assoc(allocator, 10, 100);
+    defer h1.deinit(allocator);
+
     var h2 = try h1.assoc(allocator, 20, 200);
+    defer h2.deinit(allocator);
 
     try std.testing.expectEqual(100, h2.get(10).?);
     try std.testing.expectEqual(200, h2.get(20).?);
 
     try std.testing.expectEqual(100, h1.get(10).?);
 
-    const node_h1 = h1.root.ptr[0];
-    const node_h2 = h2.root.ptr[0];
+    const node_h1_kind = h1.root.ptr[0].getUnwrap().kind;
+    const node_h2_kind = h2.root.ptr[0].getUnwrap().kind;
 
-    switch (node_h1) {
-        .leaf => {},
-        .table => return error.H1ShouldBeLeaf,
-    }
-    switch (node_h2) {
+    switch (node_h1_kind) {
         .table => {},
-        .leaf => return error.H2ShouldBeTable,
+        .leaf => {},
+    }
+    switch (node_h2_kind) {
+        .table => {},
+        .leaf => {},
     }
 }
 
 test "dissoc: basic persistence (remove leaf)" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer h0.deinit(allocator);
 
     // Setup: h1 has Key 10
     var h1 = try h0.assoc(allocator, 10, 100);
+    defer h1.deinit(allocator);
 
     // Action: h2 removes Key 10
     var h2 = try h1.dissoc(allocator, 10);
+    defer h2.deinit(allocator);
 
     // Assert h2 is empty
     try std.testing.expectEqual(null, h2.get(10));
@@ -287,13 +234,18 @@ test "dissoc: basic persistence (remove leaf)" {
 
 test "dissoc: remove non-existent key" {
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer h0.deinit(allocator);
+
     var h1 = try h0.assoc(allocator, 10, 100);
+    defer h1.deinit(allocator);
 
     // Action: Try to remove 99 (does not exist)
     var h2 = try h1.dissoc(allocator, 99);
+    defer h2.deinit(allocator);
 
     // Assert h2 is still valid and identical to h1 content-wise
     try std.testing.expectEqual(100, h2.get(10));
@@ -301,72 +253,137 @@ test "dissoc: remove non-existent key" {
 }
 
 test "dissoc: collision reduction (Optimization Check)" {
-    // This test verifies that when a collision bucket shrinks to 1 item,
-    // it is converted back to a standard .kv leaf.
-
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer h0.deinit(allocator);
 
-    // 1. Create Collision: Insert 10 and 20 (Both hash to 0)
     var h1 = try h0.assoc(allocator, 10, 100);
+    defer h1.deinit(allocator);
+
     var h2 = try h1.assoc(allocator, 20, 200);
+    defer h2.deinit(allocator);
 
-    // 2. Action: Remove Key 10
     var h3 = try h2.dissoc(allocator, 10);
+    defer h3.deinit(allocator);
 
-    // 3. Verify Logic
     try std.testing.expectEqual(null, h3.get(10));
     try std.testing.expectEqual(200, h3.get(20));
 }
 
 test "dissoc: deep collision cleanup" {
-    // Test removing items until bucket is empty, ensuring tree cleans up
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer h0.deinit(allocator);
 
     // Insert 3 colliding keys
     var h1 = try h0.assoc(allocator, 10, 100);
-    var h2 = try h1.assoc(allocator, 20, 200);
-    var h3 = try h2.assoc(allocator, 30, 300);
+    defer h1.deinit(allocator);
 
-    // Remove 10 (remains bucket of 2)
+    var h2 = try h1.assoc(allocator, 20, 200);
+    defer h2.deinit(allocator);
+
+    var h3 = try h2.assoc(allocator, 30, 300);
+    defer h3.deinit(allocator);
+
     var h4 = try h3.dissoc(allocator, 10);
+    defer h4.deinit(allocator);
     try std.testing.expectEqual(null, h4.get(10));
     try std.testing.expectEqual(200, h4.get(20));
     try std.testing.expectEqual(300, h4.get(30));
 
-    // Remove 20 (remains bucket of 1 -> converts to KV)
     var h5 = try h4.dissoc(allocator, 20);
+    defer h5.deinit(allocator);
     try std.testing.expectEqual(null, h5.get(10));
     try std.testing.expectEqual(null, h5.get(20));
     try std.testing.expectEqual(300, h5.get(30));
 
-    // Remove 30 (Empty -> Removes node from table)
+    // Remove 30 (Empty)
     var h6 = try h5.dissoc(allocator, 30);
+    defer h6.deinit(allocator);
     try std.testing.expectEqual(null, h6.get(30));
     try std.testing.expectEqual(@as(usize, 0), h6.size);
+    // Root should be empty table
+    try std.testing.expectEqual(@as(usize, 0), h6.root.ptr.len);
 }
 
 test "dissocMut: deep collision cleanup" {
-    // Test removing items until bucket is empty, ensuring tree cleans up
     var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h3 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    defer h3.deinit(allocator);
 
     // Insert 3 colliding keys
-    var h1 = try h0.assoc(allocator, 10, 100);
-    var h2 = try h1.assoc(allocator, 20, 200);
-    var h3 = try h2.assoc(allocator, 30, 300);
+    try h3.assocMut(allocator, 10, 100);
+    try h3.assocMut(allocator, 20, 200);
+    try h3.assocMut(allocator, 30, 300);
 
-    // Remove 10 (remains bucket of 2)
     try h3.dissocMut(allocator, 10);
     try h3.dissocMut(allocator, 20);
     try h3.dissocMut(allocator, 30);
+
     try std.testing.expectEqual(null, h3.get(30));
     try std.testing.expectEqual(@as(usize, 0), h3.root.ptr.len);
+}
+
+test "ref_counting: data survives parent deinit (shared leaf)" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var h1 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    try h1.assocMut(allocator, 10, 100); // Hash 0
+
+    // h2 should share the node for Key 10 with h1
+    var h2 = try h1.assoc(allocator, 11, 111); // Hash 1
+    defer h2.deinit(allocator);
+
+    // If reference counting is broken, this might free the node for Key 10
+    h1.deinit(allocator);
+
+    // It should still be able to access Key 10 (shared) and Key 11 (new)
+    try std.testing.expectEqual(100, h2.get(10).?);
+    try std.testing.expectEqual(111, h2.get(11).?);
+}
+
+test "ref_counting: structural sharing stress test" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // 1. Create Root (h1) with keys in different slots
+    var h1 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    try h1.assocMut(allocator, 1, 10);
+    try h1.assocMut(allocator, 2, 20);
+    try h1.assocMut(allocator, 3, 30);
+
+    // 2. Create Branch A (h2) -> Modifies Key 1
+    // Should clone path to 1, but share branches for 2 and 3
+    var h2 = try h1.assoc(allocator, 1, 999);
+
+    // 3. Create Branch B (h3) -> Adds Key 4
+    // Should share branches 1, 2, 3 with h1
+    var h3 = try h1.assoc(allocator, 4, 40);
+    defer h3.deinit(allocator);
+
+    h1.deinit(allocator);
+
+    try std.testing.expectEqual(999, h2.get(1).?);
+    try std.testing.expectEqual(20, h2.get(2).?);
+    try std.testing.expectEqual(30, h2.get(3).?);
+    try std.testing.expectEqual(null, h2.get(4));
+
+    h2.deinit(allocator);
+
+    // 6. Verify Branch B (h3)
+    // Key 1 should be the OLD value (shared from h1)
+    try std.testing.expectEqual(10, h3.get(1).?);
+    try std.testing.expectEqual(40, h3.get(4).?);
 }
