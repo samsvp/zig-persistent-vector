@@ -123,7 +123,7 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                     }
 
                     switch (leaf.*) {
-                        .collision => |*col| try col.assocMut(gpa, key, value),
+                        .collision => |*col| try col.assoc(gpa, key, value),
                         .kv => |kv| try table.insertTable(gpa, kv, key, value, depth),
                     }
                     self.size += 1;
@@ -162,11 +162,9 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             switch (next.*) {
                 .leaf => |*leaf| {
                     switch (leaf.*) {
-                        .kv => {
-                            try table.shrink(gpa, expected_index, pos);
-                        },
+                        .kv => try table.shrink(gpa, expected_index, pos),
                         .collision => |*col| {
-                            col.dissocMut(key);
+                            col.dissoc(key);
 
                             if (col.bucket.count() == 0) {
                                 try table.shrink(gpa, expected_index, pos);
@@ -285,8 +283,8 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
             pub fn createPath(gpa: std.mem.Allocator, kv: KV, key: K, value: V, depth: usize) !Node {
                 if (depth >= 5) {
                     var collision = HashCollisionNode.init();
-                    try collision.assocMut(gpa, key, value);
-                    try collision.assocMut(gpa, kv.key, kv.value);
+                    try collision.assoc(gpa, key, value);
+                    try collision.assoc(gpa, kv.key, kv.value);
                     return .{ .leaf = .{ .collision = collision } };
                 }
 
@@ -376,11 +374,11 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 return HashCollisionNode.initWithBucket(bucket);
             }
 
-            pub fn dissocMut(self: *HashCollisionNode, key: K) void {
+            pub fn dissoc(self: *HashCollisionNode, key: K) void {
                 _ = self.bucket.swapRemove(key);
             }
 
-            pub fn assocMut(self: *HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !void {
+            pub fn assoc(self: *HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !void {
                 try self.bucket.put(gpa, key, value);
             }
         };
