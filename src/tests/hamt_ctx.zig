@@ -304,3 +304,151 @@ test "persistent hamt: collision handling" {
     try std.testing.expectEqual(150.0, h5.get("col2").?.items[0]);
     try std.testing.expectEqual(100.0, h5.get("col3").?.items[0]);
 }
+
+test "hamt: strHash basic CRUD" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var h0 = MyHamt.init();
+    defer h0.deinit(allocator);
+
+    var listA = FloatList.empty;
+    defer listA.deinit(allocator);
+    try listA.append(allocator, 10.0);
+
+    var listB = FloatList.empty;
+    defer listB.deinit(allocator);
+    try listB.append(allocator, 20.0);
+
+    var h1 = try h0.assoc(allocator, "alpha", listA);
+    defer h1.deinit(allocator);
+
+    try std.testing.expectEqual(10.0, h1.get("alpha").?.items[0]);
+    try std.testing.expect(h1.get("beta") == null);
+
+    var h2 = try h1.assoc(allocator, "beta", listB);
+    defer h2.deinit(allocator);
+
+    try std.testing.expectEqual(10.0, h2.get("alpha").?.items[0]);
+    try std.testing.expectEqual(20.0, h2.get("beta").?.items[0]);
+
+    var h3 = try h2.dissoc(allocator, "alpha");
+    defer h3.deinit(allocator);
+
+    try std.testing.expect(h3.get("alpha") == null);
+    try std.testing.expectEqual(20.0, h3.get("beta").?.items[0]);
+
+    try std.testing.expectEqual(10.0, h2.get("alpha").?.items[0]);
+}
+
+test "hamt: strHash persistence chain (structural sharing)" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var roots = std.ArrayList(MyHamt).empty;
+    defer {
+        for (roots.items) |*r| r.deinit(allocator);
+        roots.deinit(allocator);
+    }
+
+    try roots.append(allocator, MyHamt.init());
+
+    var data = FloatList.empty;
+    defer data.deinit(allocator);
+    try data.append(allocator, 1.0);
+
+    {
+        const next = try roots.items[0].assoc(allocator, "one", data);
+        try roots.append(allocator, next);
+    }
+
+    {
+        const next = try roots.items[1].assoc(allocator, "two", data);
+        try roots.append(allocator, next);
+    }
+
+    {
+        const next = try roots.items[2].assoc(allocator, "three", data);
+        try roots.append(allocator, next);
+    }
+
+    {
+        var newData = FloatList.empty;
+        defer newData.deinit(allocator);
+        try newData.append(allocator, 999.0);
+
+        const next = try roots.items[3].assoc(allocator, "one", newData);
+        try roots.append(allocator, next);
+    }
+
+    try std.testing.expect(roots.items[1].get("one") != null);
+    try std.testing.expect(roots.items[1].get("two") == null);
+
+    try std.testing.expectEqual(1.0, roots.items[3].get("one").?.items[0]);
+    try std.testing.expect(roots.items[3].get("three") != null);
+
+    try std.testing.expectEqual(999.0, roots.items[4].get("one").?.items[0]);
+    try std.testing.expectEqual(1.0, roots.items[4].get("two").?.items[0]);
+}
+
+test "hamt: strHash bulk insertion stress test" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var h = MyHamt.init();
+    defer h.deinit(allocator);
+
+    // Keep track of allocated keys to free them later
+    var keys = std.ArrayList([]const u8).empty;
+    defer {
+        for (keys.items) |k| allocator.free(k);
+        keys.deinit(allocator);
+    }
+
+    var val = FloatList.empty;
+    defer val.deinit(allocator);
+    try val.append(allocator, 42.0);
+
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const key = try std.fmt.allocPrint(allocator, "key_{d}", .{i});
+        try keys.append(allocator, key);
+
+        try h.assocMut(allocator, key, val);
+    }
+
+    try std.testing.expectEqual(@as(usize, 100), h.size);
+
+    // Verify all exist
+    for (keys.items) |k| {
+        const res = h.get(k);
+        try std.testing.expect(res != null);
+        try std.testing.expectEqual(42.0, res.?.items[0]);
+    }
+
+    // Verify non-existent
+    try std.testing.expect(h.get("key_101") == null);
+
+    // Remove the first 50
+    i = 0;
+    while (i < 50) : (i += 1) {
+        try h.dissocMut(allocator, keys.items[i]);
+    }
+
+    try std.testing.expectEqual(@as(usize, 50), h.size);
+
+    // Verify remaining 50 exist
+    i = 50;
+    while (i < 100) : (i += 1) {
+        try std.testing.expect(h.get(keys.items[i]) != null);
+    }
+
+    // Verify removed 50 are gone
+    i = 0;
+    while (i < 50) : (i += 1) {
+        try std.testing.expect(h.get(keys.items[i]) == null);
+    }
+}
