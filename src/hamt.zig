@@ -21,11 +21,25 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
         const Node = union(enum) {
             leaf: Leaf,
             table: Table,
+
+            pub fn clone(self: *Node, gpa: std.mem.Allocator) !Node {
+                return switch (self.*) {
+                    .leaf => |*leaf| .{ .leaf = try leaf.clone(gpa) },
+                    .table => |*t| .{ .table = try t.clone(gpa) },
+                };
+            }
         };
 
         const Leaf = union(enum) {
             kv: KV,
             collision: HashCollisionNode,
+
+            pub fn clone(leaf: *Leaf, gpa: std.mem.Allocator) !Leaf {
+                return switch (leaf.*) {
+                    .kv => |kv| .{ .kv = .{ .key = kv.key, .value = kv.value } },
+                    .collision => |*col| .{ .collision = try col.clone(gpa) },
+                };
+            }
         };
 
         const KV = struct {
@@ -35,19 +49,6 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
 
         const Self = @This();
 
-        const SearchResult = struct {
-            status: Status,
-            anchor: *Table,
-            value: ?*Leaf,
-            depth: usize,
-
-            const Status = enum {
-                success,
-                not_found,
-                key_mismatch,
-            };
-        };
-
         pub fn init() Self {
             return .{
                 .root = Table.init(),
@@ -56,71 +57,137 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
         }
 
         pub fn get(self: *Self, key: K) ?V {
-            const search_res = self.root.searchRecursive(key, 0);
-            return switch (search_res.status) {
-                .success => switch (search_res.value.?.*) {
-                    .kv => |kv| kv.value,
-                    .collision => |col| col.find(key),
-                },
-                else => null,
-            };
-        }
-
-        pub fn getSearch(self: *Self, key: K) SearchResult {
             return self.root.searchRecursive(key, 0);
         }
 
-        pub fn assoc(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !void {
-            const search_res = self.getSearch(key);
-            switch (search_res.status) {
-                .success => {
-                    switch (search_res.value.?.*) {
-                        .kv => |*kv| kv.*.value = value,
-                        .collision => |*col| try col.assocMut(gpa, key, value),
+        pub fn assoc(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !Self {
+            var new_self: Self = .{
+                .root = try self.root.clone(gpa),
+                .size = self.size,
+            };
+
+            try new_self.assocRecursive(gpa, &new_self.root, key, value, 0, true);
+            return new_self;
+        }
+
+        pub fn dissoc(self: *Self, gpa: std.mem.Allocator, key: K) !Self {
+            var new_self: Self = .{
+                .root = try self.root.clone(gpa),
+                .size = self.size,
+            };
+
+            _ = try new_self.dissocRecursive(gpa, &new_self.root, key, 0, true);
+            return new_self;
+        }
+
+        pub fn assocMut(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !void {
+            try self.assocRecursive(gpa, &self.root, key, value, 0, true);
+        }
+
+        pub fn dissocMut(self: *Self, gpa: std.mem.Allocator, key: K) !void {
+            _ = try self.dissocRecursive(gpa, &self.root, key, 0, false);
+        }
+
+        fn assocRecursive(
+            self: *Self,
+            gpa: std.mem.Allocator,
+            table: *Table,
+            key: K,
+            value: V,
+            depth: usize,
+            comptime should_clone: bool,
+        ) !void {
+            const shift: u5 = @intCast(bits * depth);
+            const expected_index: u5 = @intCast((context.hash(key) >> shift) & bit_mask);
+            if (!table.hasIndex(expected_index)) {
+                try table.insertKV(gpa, key, value, expected_index);
+                self.size += 1;
+                return;
+            }
+
+            const pos = Table.getPos(@intCast(expected_index), table.index);
+            if (should_clone) {
+                table.ptr[pos] = try table.ptr[pos].clone(gpa);
+            }
+            const next = &table.ptr[pos];
+            switch (next.*) {
+                .leaf => |*leaf| {
+                    const found = switch (leaf.*) {
+                        .kv => |*kv| context.eql(key, kv.key),
+                        .collision => |col| col.bucket.contains(key),
+                    };
+
+                    if (found) {
+                        try table.insertKV(gpa, key, value, expected_index);
+                        return;
                     }
-                },
-                .not_found => {
-                    const shift: u5 = @intCast(width * search_res.depth);
-                    const index: u5 = @intCast((context.hash(key) >> shift) & bit_mask);
-                    try search_res.anchor.insertKV(gpa, key, value, index);
-                    self.size += 1;
-                },
-                .key_mismatch => {
-                    const leaf = search_res.value.?;
+
                     switch (leaf.*) {
                         .collision => |*col| try col.assocMut(gpa, key, value),
-                        .kv => |kv| try search_res.anchor.insertTable(gpa, kv, key, value, search_res.depth),
+                        .kv => |kv| try table.insertTable(gpa, kv, key, value, depth),
                     }
                     self.size += 1;
+                },
+                .table => |*t| {
+                    if (should_clone) {
+                        const new_table = try t.clone(gpa);
+                        table.ptr[pos] = .{ .table = new_table };
+                    }
+                    return self.assocRecursive(gpa, &table.ptr[pos].table, key, value, depth + 1, should_clone);
                 },
             }
         }
 
-        pub fn dissoc(self: *Self, gpa: std.mem.Allocator, key: K) !void {
-            const search_res = self.getSearch(key);
-            if (search_res.status != .success) {
-                return;
+        fn dissocRecursive(
+            self: *Self,
+            gpa: std.mem.Allocator,
+            table: *Table,
+            key: K,
+            depth: usize,
+            comptime should_clone: bool,
+        ) !bool {
+            const shift: u5 = @intCast(bits * depth);
+            const expected_index: u5 = @intCast((context.hash(key) >> shift) & bit_mask);
+            if (!table.hasIndex(expected_index)) {
+                return false;
             }
 
-            const shift: u5 = @intCast(width * search_res.depth);
-            const index: u5 = @intCast((context.hash(key) >> shift) & bit_mask);
-            const pos = Table.getPos(index, search_res.anchor.index);
-            switch (search_res.value.?.*) {
-                .kv => {
-                    try search_res.anchor.shrink(gpa, index, pos);
-                },
-                .collision => |*col| {
-                    col.dissocMut(key);
+            const pos = Table.getPos(@intCast(expected_index), table.index);
 
-                    if (col.bucket.count() == 0) {
-                        try search_res.anchor.shrink(gpa, index, pos);
-                    } else if (col.bucket.count() == 1) {
-                        const first = col.bucket.entries.get(0);
-                        search_res.anchor.ptr[pos] = .{ .leaf = .{ .kv = .{ .key = first.key, .value = first.value } } };
+            if (should_clone) {
+                table.ptr[pos] = try table.ptr[pos].clone(gpa);
+            }
+
+            const next = &table.ptr[pos];
+            switch (next.*) {
+                .leaf => |*leaf| {
+                    switch (leaf.*) {
+                        .kv => {
+                            try table.shrink(gpa, expected_index, pos);
+                        },
+                        .collision => |*col| {
+                            col.dissocMut(key);
+
+                            if (col.bucket.count() == 0) {
+                                try table.shrink(gpa, expected_index, pos);
+                            } else if (col.bucket.count() == 1) {
+                                const first = col.bucket.entries.get(0);
+                                table.ptr[pos] = .{ .leaf = .{ .kv = .{ .key = first.key, .value = first.value } } };
+                            }
+                        },
                     }
+                    self.size -= 1;
+                    return table.ptr.len == 0;
+                },
+                .table => |*t| {
+                    const table_removed = try self.dissocRecursive(gpa, t, key, depth + 1, should_clone);
+                    if (!table_removed) {
+                        return false;
+                    }
+                    try table.shrink(gpa, expected_index, pos);
+                    return table.ptr.len == 0;
                 },
             }
-            self.size -= 1;
         }
 
         const Table = struct {
@@ -134,36 +201,23 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 };
             }
 
-            fn searchRecursive(table: *Table, key: V, depth: usize) SearchResult {
+            fn searchRecursive(table: *Table, key: V, depth: usize) ?V {
                 const shift: u5 = @intCast(bits * depth);
                 const expected_index = (context.hash(key) >> shift) & bit_mask;
                 if (!table.hasIndex(@intCast(expected_index))) {
-                    return .{
-                        .status = .not_found,
-                        .anchor = table,
-                        .value = null,
-                        .depth = depth,
-                    };
+                    return null;
                 }
 
                 const pos = Table.getPos(@intCast(expected_index), table.index);
                 const next = &table.ptr[pos];
-                switch (next.*) {
-                    .leaf => |*leaf| {
-                        const status: SearchResult.Status = switch (leaf.*) {
-                            .kv => |*kv| if (context.eql(key, kv.key)) .success else .key_mismatch,
-                            .collision => |col| if (col.find(key)) |_| .success else .key_mismatch,
-                        };
-
-                        return .{
-                            .status = status,
-                            .anchor = table,
-                            .value = leaf,
-                            .depth = depth,
-                        };
+                return switch (next.*) {
+                    .leaf => |*leaf| switch (leaf.*) {
+                        .kv => |*kv| if (context.eql(key, kv.key)) kv.value else null,
+                        .collision => |col| col.bucket.get(key),
                     },
-                    .table => |*t| return searchRecursive(t, key, depth + 1),
-                }
+
+                    .table => |*t| searchRecursive(t, key, depth + 1),
+                };
             }
 
             /// Returns the dense index from the sparse index.
@@ -317,15 +371,9 @@ pub fn Hamt(comptime K: type, comptime V: type, context: Context(K)) type {
                 };
             }
 
-            pub fn find(self: HashCollisionNode, key: K) ?V {
-                return self.bucket.get(key);
-            }
-
-            pub fn assoc(self: HashCollisionNode, gpa: std.mem.Allocator, key: K, value: V) !Self {
+            pub fn clone(self: HashCollisionNode, gpa: std.mem.Allocator) !HashCollisionNode {
                 const bucket = try self.bucket.clone(gpa);
-                var node = HashCollisionNode.initWithBucket(bucket);
-                try node.assocMut(gpa, key, value);
-                return node;
+                return HashCollisionNode.initWithBucket(bucket);
             }
 
             pub fn dissocMut(self: *HashCollisionNode, key: K) void {
