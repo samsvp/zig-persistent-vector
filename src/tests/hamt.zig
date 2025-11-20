@@ -1,4 +1,5 @@
 const std = @import("std");
+pub const KVContext = @import("../hamt.zig").KVContext;
 pub const Hamt = @import("../hamt.zig").Hamt;
 
 fn eql(a: i32, b: i32) bool {
@@ -9,6 +10,8 @@ fn hash(a: i32) u32 {
     return @intCast(@mod(a, 10));
 }
 
+const default_kv_ctx = KVContext(i32, i32).default();
+
 test "hamt: manual insert and search" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer {
@@ -17,7 +20,7 @@ test "hamt: manual insert and search" {
     }
     const allocator = gpa.allocator();
 
-    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer hamt.deinit(allocator);
 
     try hamt.assocMut(allocator, 10, 100);
@@ -44,7 +47,7 @@ test "hamt: sparse insertion stress check" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer hamt.deinit(allocator);
 
     try hamt.assocMut(allocator, 1, 10);
@@ -64,7 +67,7 @@ test "hamt: collision handling (push down)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer hamt.deinit(allocator);
 
     try hamt.assocMut(allocator, 10, 100);
@@ -90,7 +93,7 @@ test "hamt: dissoc basic kv (leaf removal)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer hamt.deinit(allocator);
 
     try hamt.assocMut(allocator, 10, 100);
@@ -107,7 +110,7 @@ test "hamt: dissoc from collision (reduction logic)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer hamt.deinit(allocator);
 
     // Setup: Create collision
@@ -126,7 +129,7 @@ test "hamt: dissoc non-existent key" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var hamt = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer hamt.deinit(allocator);
 
     try hamt.assocMut(allocator, 10, 100);
@@ -142,7 +145,7 @@ test "assoc: basic immutability (add new key)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h0.deinit(allocator);
 
     var h1 = try h0.assoc(allocator, 10, 100);
@@ -159,7 +162,7 @@ test "assoc: update existing key (copy-on-write)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h0.deinit(allocator);
 
     var h1 = try h0.assoc(allocator, 10, 100);
@@ -179,7 +182,7 @@ test "assoc: collision divergence (structure branching)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h0.deinit(allocator);
 
     // Key 10 (Hash 0) and Key 20 (Hash 0) collision
@@ -212,7 +215,7 @@ test "dissoc: basic persistence (remove leaf)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h0.deinit(allocator);
 
     // Setup: h1 has Key 10
@@ -237,7 +240,7 @@ test "dissoc: remove non-existent key" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h0.deinit(allocator);
 
     var h1 = try h0.assoc(allocator, 10, 100);
@@ -257,7 +260,7 @@ test "dissoc: collision reduction (Optimization Check)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h0.deinit(allocator);
 
     var h1 = try h0.assoc(allocator, 10, 100);
@@ -278,7 +281,7 @@ test "dissoc: deep collision cleanup" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h0 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h0.deinit(allocator);
 
     // Insert 3 colliding keys
@@ -317,7 +320,7 @@ test "dissocMut: deep collision cleanup" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h3 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h3 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     defer h3.deinit(allocator);
 
     // Insert 3 colliding keys
@@ -338,7 +341,7 @@ test "ref_counting: data survives parent deinit (shared leaf)" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var h1 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h1 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     try h1.assocMut(allocator, 10, 100); // Hash 0
 
     // h2 should share the node for Key 10 with h1
@@ -359,7 +362,7 @@ test "ref_counting: structural sharing stress test" {
     const allocator = gpa.allocator();
 
     // 1. Create Root (h1) with keys in different slots
-    var h1 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }).init();
+    var h1 = Hamt(i32, i32, .{ .eql = eql, .hash = hash }, default_kv_ctx).init();
     try h1.assocMut(allocator, 1, 10);
     try h1.assocMut(allocator, 2, 20);
     try h1.assocMut(allocator, 3, 30);

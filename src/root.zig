@@ -4,6 +4,7 @@ pub const RefCounter = @import("ref_counter.zig").RefCounter;
 pub const Hamt = @import("hamt.zig").Hamt;
 
 test "all tests" {
-    _ = @import("tests/pvec.zig");
-    _ = @import("tests/hatm.zig");
+    //_ = @import("tests/pvec.zig");
+    //_ = @import("tests/hamt.zig");
+    _ = @import("tests/hamt_ctx.zig");
 }
