@@ -101,7 +101,7 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
         }
 
         pub fn tail(self: Self) Iterator {
-            return self.toIter().tail();
+            return self.iterator().tail();
         }
 
         pub fn getLeaf(self: Self, i: usize) Leaf {
@@ -249,7 +249,7 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
             return clone.self;
         }
 
-        pub fn toIter(self: Self) Iterator {
+        pub fn iterator(self: Self) Iterator {
             return Iterator.init(self);
         }
 
@@ -447,7 +447,7 @@ pub fn MultiPVector(comptime T: type) type {
         }
 
         pub fn tailField(self: Self, comptime field: Field) IteratorField(field) {
-            return self.toFieldIter(field).tail();
+            return self.fieldIterator(field).tail();
         }
 
         pub fn getField(self: Self, i: usize, comptime field: Field) FieldType(field) {
@@ -458,7 +458,7 @@ pub fn MultiPVector(comptime T: type) type {
             return VecT.Iterator.init(self.vec);
         }
 
-        pub fn toFieldIter(self: Self, comptime field: Field) IteratorField(field) {
+        pub fn fieldIterator(self: Self, comptime field: Field) IteratorField(field) {
             return IteratorField(field).init(self);
         }
 

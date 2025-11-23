@@ -452,3 +452,105 @@ test "hamt: strHash bulk insertion stress test" {
         try std.testing.expect(h.get(keys.items[i]) == null);
     }
 }
+
+test "hamt: iterator basic" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var h = MyHamt.init();
+    defer h.deinit(allocator);
+
+    var list = FloatList.empty;
+    defer list.deinit(allocator);
+    try list.append(allocator, 1.0);
+
+    try h.assocMut(allocator, "A", list);
+    try h.assocMut(allocator, "B", list);
+    try h.assocMut(allocator, "C", list);
+
+    var it = h.iterator();
+    var count: usize = 0;
+    while (try it.next()) |kv| {
+        count += 1;
+        // Basic check to ensure we get valid data back
+        try std.testing.expect(kv.value.items.len == 1);
+    }
+    try std.testing.expectEqual(@as(usize, 3), count);
+}
+
+test "hamt: iterator with collision bucket" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Force collisions
+    const BadHashCtx = HashContext(K){
+        .eql = strEql,
+        .hash = struct {
+            fn h(_: K) u32 {
+                return 0;
+            }
+        }.h,
+    };
+    const BadHamt = Hamt(K, V, BadHashCtx, MyKVCtx);
+
+    var h = BadHamt.init();
+    defer h.deinit(allocator);
+
+    var list = FloatList.empty;
+    defer list.deinit(allocator); // template
+    try list.append(allocator, 42.0);
+
+    // Insert 3 colliding items
+    try h.assocMut(allocator, "col1", list);
+    try h.assocMut(allocator, "col2", list);
+    try h.assocMut(allocator, "col3", list);
+
+    var it = h.iterator();
+    var count: usize = 0;
+    var found_col1 = false;
+
+    while (try it.next()) |kv| {
+        count += 1;
+        if (std.mem.eql(u8, kv.key, "col1")) found_col1 = true;
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), count);
+    try std.testing.expect(found_col1);
+}
+
+test "hamt: iterator massive stress test" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var h = MyHamt.init();
+    defer h.deinit(allocator);
+
+    // Insert 100 items
+    var keys = std.ArrayList([]const u8).empty;
+    defer {
+        for (keys.items) |k| allocator.free(k);
+        keys.deinit(allocator);
+    }
+
+    var list = FloatList.empty;
+    defer list.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const key = try std.fmt.allocPrint(allocator, "{d}", .{i});
+        try keys.append(allocator, key);
+        try h.assocMut(allocator, key, list);
+    }
+
+    // Iterate and count
+    var it = h.iterator();
+    var count: usize = 0;
+    while (try it.next()) |_| {
+        count += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 100), count);
+}

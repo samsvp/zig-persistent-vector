@@ -762,7 +762,7 @@ test "multi field iter" {
         var vector = try MultiPVector(S).init(allocator, data);
         defer vector.deinit(allocator);
 
-        var iter = vector.toFieldIter(.field1);
+        var iter = vector.fieldIterator(.field1);
         for (0..data.len) |i| {
             try std.testing.expectEqual(data[i].field1, iter.next().?);
         }

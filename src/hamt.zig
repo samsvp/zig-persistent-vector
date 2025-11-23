@@ -275,6 +275,84 @@ pub fn Hamt(
             }
         }
 
+        pub fn iterator(self: Self) Iterator {
+            return Iterator.init(self);
+        }
+
+        pub const Iterator = struct {
+            depth: usize = 0,
+            stack: [MAX_DEPTH]StackFrame = undefined,
+            collision_bucket: ?HashCollisionNode = null,
+
+            const StackFrame = struct {
+                kind: Kind,
+                index: usize = 0,
+
+                const Kind = union(enum) {
+                    table: Table,
+                    collision: HashCollisionNode,
+                };
+            };
+
+            const MAX_DEPTH = 8;
+
+            pub fn init(trie: Self) Iterator {
+                var iter: Iterator = .{};
+
+                iter.stack[0] = .{
+                    .kind = .{ .table = trie.root },
+                    .index = 0,
+                };
+
+                return iter;
+            }
+
+            pub fn next(iter: *Iterator) !?KV(K, V) {
+                var stack = &iter.stack[iter.depth];
+                switch (stack.kind) {
+                    .table => |table| if (stack.index >= table.ptr.len) {
+                        // finished table
+                        if (iter.depth == 0) {
+                            // finished iter
+                            return null;
+                        }
+
+                        iter.depth -= 1;
+                        // move upwards from the stack
+                        return iter.next();
+                    },
+                    .collision => |col| {
+                        if (stack.index >= col.bucket.items.len) {
+                            iter.depth -= 1;
+                            return iter.next();
+                        }
+
+                        const kv = col.bucket.items[stack.index];
+                        stack.index += 1;
+                        return kv;
+                    },
+                }
+
+                const node = try stack.kind.table.ptr[stack.index].get();
+                stack.index += 1;
+                switch (node.kind) {
+                    .leaf => |leaf| switch (leaf) {
+                        .kv => |kv| return kv,
+                        .collision => |col| {
+                            iter.depth += 1;
+                            iter.stack[iter.depth] = .{ .kind = .{ .collision = col } };
+                            return iter.next();
+                        },
+                    },
+                    .table => |table| {
+                        iter.depth += 1;
+                        iter.stack[iter.depth] = .{ .kind = .{ .table = table } };
+                        return iter.next();
+                    },
+                }
+            }
+        };
+
         const Table = struct {
             ptr: []NodeRef,
             index: u32,
