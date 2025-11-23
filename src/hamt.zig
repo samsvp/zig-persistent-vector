@@ -67,63 +67,6 @@ pub fn Hamt(
         root: Table,
         size: usize,
 
-        const NodeRef = RefCounter(*Node).Ref;
-
-        const Node = struct {
-            kind: Node.Kind,
-
-            pub fn deinit(self: *Node, gpa: std.mem.Allocator) void {
-                self.kind.deinit(gpa);
-                gpa.destroy(self);
-            }
-
-            pub fn clone(self: *Node, gpa: std.mem.Allocator) !NodeRef {
-                const new_node_ptr = try gpa.create(Node);
-                new_node_ptr.* = .{
-                    .kind = try self.kind.clone(gpa),
-                };
-                return RefCounter(*Node).init(gpa, new_node_ptr);
-            }
-
-            const Kind = union(enum) {
-                leaf: Leaf,
-                table: Table,
-
-                pub fn deinit(self: *Kind, gpa: std.mem.Allocator) void {
-                    switch (self.*) {
-                        .leaf => |*l| l.deinit(gpa),
-                        .table => |*t| t.deinit(gpa),
-                    }
-                }
-
-                pub fn clone(self: *Kind, gpa: std.mem.Allocator) !Kind {
-                    return switch (self.*) {
-                        .leaf => |*l| .{ .leaf = try l.clone(gpa) },
-                        .table => |*t| .{ .table = try t.clone(gpa) },
-                    };
-                }
-            };
-        };
-
-        const Leaf = union(enum) {
-            kv: KV(K, V),
-            collision: HashCollisionNode,
-
-            pub fn deinit(self: *Leaf, gpa: std.mem.Allocator) void {
-                switch (self.*) {
-                    .kv => |*kv| kv_context.deinit(gpa, kv),
-                    .collision => |*col| col.deinit(gpa),
-                }
-            }
-
-            pub fn clone(leaf: *Leaf, gpa: std.mem.Allocator) !Leaf {
-                return switch (leaf.*) {
-                    .kv => |*kv| .{ .kv = try kv_context.clone(gpa, kv) },
-                    .collision => |*col| .{ .collision = try col.clone(gpa) },
-                };
-            }
-        };
-
         const Self = @This();
 
         pub fn init() Self {
@@ -135,6 +78,13 @@ pub fn Hamt(
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             self.root.deinit(gpa);
+        }
+
+        pub fn clone(self: *Self, gpa: std.mem.Allocator) !Self {
+            return .{
+                .root = try self.root.clone(gpa),
+                .size = self.size,
+            };
         }
 
         pub fn get(self: *Self, key: K) ?V {
@@ -350,6 +300,63 @@ pub fn Hamt(
                         return iter.next();
                     },
                 }
+            }
+        };
+
+        const NodeRef = RefCounter(*Node).Ref;
+
+        const Node = struct {
+            kind: Node.Kind,
+
+            pub fn deinit(self: *Node, gpa: std.mem.Allocator) void {
+                self.kind.deinit(gpa);
+                gpa.destroy(self);
+            }
+
+            pub fn clone(self: *Node, gpa: std.mem.Allocator) !NodeRef {
+                const new_node_ptr = try gpa.create(Node);
+                new_node_ptr.* = .{
+                    .kind = try self.kind.clone(gpa),
+                };
+                return RefCounter(*Node).init(gpa, new_node_ptr);
+            }
+
+            const Kind = union(enum) {
+                leaf: Leaf,
+                table: Table,
+
+                pub fn deinit(self: *Kind, gpa: std.mem.Allocator) void {
+                    switch (self.*) {
+                        .leaf => |*l| l.deinit(gpa),
+                        .table => |*t| t.deinit(gpa),
+                    }
+                }
+
+                pub fn clone(self: *Kind, gpa: std.mem.Allocator) !Kind {
+                    return switch (self.*) {
+                        .leaf => |*l| .{ .leaf = try l.clone(gpa) },
+                        .table => |*t| .{ .table = try t.clone(gpa) },
+                    };
+                }
+            };
+        };
+
+        const Leaf = union(enum) {
+            kv: KV(K, V),
+            collision: HashCollisionNode,
+
+            pub fn deinit(self: *Leaf, gpa: std.mem.Allocator) void {
+                switch (self.*) {
+                    .kv => |*kv| kv_context.deinit(gpa, kv),
+                    .collision => |*col| col.deinit(gpa),
+                }
+            }
+
+            pub fn clone(leaf: *Leaf, gpa: std.mem.Allocator) !Leaf {
+                return switch (leaf.*) {
+                    .kv => |*kv| .{ .kv = try kv_context.clone(gpa, kv) },
+                    .collision => |*col| .{ .collision = try col.clone(gpa) },
+                };
             }
         };
 
