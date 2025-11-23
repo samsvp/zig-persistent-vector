@@ -307,7 +307,7 @@ pub fn Hamt(
                 return iter;
             }
 
-            pub fn next(iter: *Iterator) !?KV(K, V) {
+            pub fn next(iter: *Iterator) ?KV(K, V) {
                 var stack = &iter.stack[iter.depth];
                 switch (stack.kind) {
                     .table => |table| if (stack.index >= table.ptr.len) {
@@ -333,7 +333,7 @@ pub fn Hamt(
                     },
                 }
 
-                const node = try stack.kind.table.ptr[stack.index].get();
+                const node = stack.kind.table.ptr[stack.index].get() catch return null;
                 stack.index += 1;
                 switch (node.kind) {
                     .leaf => |leaf| switch (leaf) {

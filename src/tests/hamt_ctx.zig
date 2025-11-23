@@ -471,7 +471,7 @@ test "hamt: iterator basic" {
 
     var it = h.iterator();
     var count: usize = 0;
-    while (try it.next()) |kv| {
+    while (it.next()) |kv| {
         count += 1;
         // Basic check to ensure we get valid data back
         try std.testing.expect(kv.value.items.len == 1);
@@ -511,7 +511,7 @@ test "hamt: iterator with collision bucket" {
     var count: usize = 0;
     var found_col1 = false;
 
-    while (try it.next()) |kv| {
+    while (it.next()) |kv| {
         count += 1;
         if (std.mem.eql(u8, kv.key, "col1")) found_col1 = true;
     }
@@ -548,7 +548,7 @@ test "hamt: iterator massive stress test" {
     // Iterate and count
     var it = h.iterator();
     var count: usize = 0;
-    while (try it.next()) |_| {
+    while (it.next()) |_| {
         count += 1;
     }
 
