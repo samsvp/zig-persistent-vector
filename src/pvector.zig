@@ -465,13 +465,12 @@ pub fn MultiPVector(comptime T: type) type {
         pub fn IteratorField(comptime field: Field) type {
             return struct {
                 multi_pvec: Self,
-                leaf: MultiIVector(T),
                 index: usize = 0,
+                items: []FieldType(field) = undefined,
 
                 pub fn init(vec: Self) IteratorField(field) {
                     return .{
                         .multi_pvec = vec,
-                        .leaf = undefined,
                     };
                 }
 
@@ -481,10 +480,11 @@ pub fn MultiPVector(comptime T: type) type {
                     }
 
                     if (iter.index % VecT.width == 0) {
-                        iter.leaf = iter.multi_pvec.vec.getLeaf(iter.index).getUnwrap();
+                        const leaf = iter.multi_pvec.vec.getLeaf(iter.index).getUnwrap();
+                        iter.items = leaf.array.items(field);
                     }
 
-                    const val = iter.leaf.getField(iter.index % VecT.width, field);
+                    const val = iter.items[iter.index % VecT.width];
                     iter.index += 1;
                     return val;
                 }
@@ -498,15 +498,15 @@ pub fn MultiPVector(comptime T: type) type {
                 }
 
                 pub fn tail(iter: IteratorField(field)) IteratorField(field) {
-                    const leaf = if (iter.index < iter.multi_pvec.vec.len - 1)
-                        iter.multi_pvec.vec.getLeaf(iter.index + 1).getUnwrap()
+                    const items = if (iter.index < iter.multi_pvec.vec.len - 1)
+                        iter.multi_pvec.vec.getLeaf(iter.index + 1).getUnwrap().array.items(field)
                     else
                         undefined;
 
                     return .{
                         .index = iter.index + 1,
                         .multi_pvec = iter.multi_pvec,
-                        .leaf = leaf,
+                        .items = items,
                     };
                 }
             };

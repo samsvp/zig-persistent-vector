@@ -113,7 +113,7 @@ pub fn MultiIVector(comptime T: type) type {
         }
 
         pub fn get(self: Self, i: usize) T {
-            return self.array.slice().get(i);
+            return self.array.get(i);
         }
 
         pub fn getField(self: Self, i: usize, comptime field: Field) FieldType(field) {
