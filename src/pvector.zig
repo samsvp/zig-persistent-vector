@@ -411,7 +411,7 @@ pub fn MultiPVector(comptime T: type) type {
         }
 
         pub fn tail(self: Self) VecT.Iterator {
-            return self.toIter().tail();
+            return self.iterator().tail();
         }
 
         pub fn get(self: Self, i: usize) T {
@@ -454,12 +454,16 @@ pub fn MultiPVector(comptime T: type) type {
             return self.vec.getLeaf(i).getUnwrap().getField(i % VecT.width, field);
         }
 
-        pub fn toIter(self: Self) VecT.Iterator {
+        pub fn iterator(self: Self) VecT.Iterator {
             return VecT.Iterator.init(self.vec);
         }
 
         pub fn fieldIterator(self: Self, comptime field: Field) IteratorField(field) {
             return IteratorField(field).init(self);
+        }
+
+        pub fn fieldsIterator(self: Self, comptime fields: []const Field) IteratorFields(fields) {
+            return IteratorFields(fields).init(self);
         }
 
         pub fn IteratorField(comptime field: Field) type {
@@ -498,15 +502,99 @@ pub fn MultiPVector(comptime T: type) type {
                 }
 
                 pub fn tail(iter: IteratorField(field)) IteratorField(field) {
-                    const items = if (iter.index < iter.multi_pvec.vec.len - 1)
-                        iter.multi_pvec.vec.getLeaf(iter.index + 1).getUnwrap().array.items(field)
-                    else
-                        undefined;
+                    const leaf = iter.multi_pvec.vec.getLeaf(iter.index + 1).getUnwrap();
+                    const items = leaf.array.items(field);
 
                     return .{
                         .index = iter.index + 1,
                         .multi_pvec = iter.multi_pvec,
                         .items = items,
+                    };
+                }
+            };
+        }
+
+        pub fn IteratorFields(comptime fields: []const Field) type {
+            const ResultType = std.meta.Tuple(&blk: {
+                var types: [fields.len]type = undefined;
+                for (fields, 0..) |f, i| {
+                    types[i] = FieldType(f);
+                }
+                break :blk types;
+            });
+
+            const SlicesType = std.meta.Tuple(&blk: {
+                var types: [fields.len]type = undefined;
+                for (fields, 0..) |f, i| {
+                    types[i] = []FieldType(f);
+                }
+                break :blk types;
+            });
+
+            return struct {
+                multi_pvec: Self,
+                index: usize = 0,
+                leaf_slices: SlicesType = undefined,
+
+                const Iterator = @This();
+
+                pub fn init(vec: Self) Iterator {
+                    return .{
+                        .multi_pvec = vec,
+                    };
+                }
+
+                pub fn next(iter: *Iterator) ?ResultType {
+                    if (iter.index >= iter.multi_pvec.vec.len) {
+                        return null;
+                    }
+
+                    if (iter.index % VecT.width == 0) {
+                        const leaf = iter.multi_pvec.vec.getLeaf(iter.index).getUnwrap();
+                        const slice = leaf.array.slice();
+                        inline for (fields, 0..) |f, i| {
+                            iter.leaf_slices[i] = slice.items(f);
+                        }
+                    }
+
+                    var result: ResultType = undefined;
+                    const offset = iter.index % VecT.width;
+
+                    inline for (fields, 0..) |_, i| {
+                        result[i] = iter.leaf_slices[i][offset];
+                    }
+
+                    iter.index += 1;
+                    return result;
+                }
+
+                pub fn head(iter: Iterator) ?ResultType {
+                    if (iter.index >= iter.multi_pvec.vec.len) {
+                        return null;
+                    }
+
+                    var result: ResultType = undefined;
+                    inline for (fields, 0..) |f, i| {
+                        result[i] = iter.multi_pvec.getField(iter.index, f);
+                    }
+                    return result;
+                }
+
+                pub fn tail(iter: Iterator) Iterator {
+                    const next_idx = iter.index + 1;
+
+                    var next_slices: SlicesType = undefined;
+
+                    const leaf = iter.multi_pvec.vec.getLeaf(next_idx).getUnwrap();
+                    const slice = leaf.array.slice();
+                    inline for (fields, 0..) |f, i| {
+                        next_slices[i] = slice.items(f);
+                    }
+
+                    return .{
+                        .index = next_idx,
+                        .multi_pvec = iter.multi_pvec,
+                        .leaf_slices = next_slices,
                     };
                 }
             };
