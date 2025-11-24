@@ -1,5 +1,7 @@
 pub const IVector = @import("ivector.zig").IVector;
+pub const MultiIVector = @import("ivector.zig").MultiIVector;
 pub const PVector = @import("pvector.zig").PVector;
+pub const MultiPVector = @import("pvector.zig").MultiPVector;
 pub const RefCounter = @import("ref_counter.zig").RefCounter;
 pub const Hamt = @import("hamt.zig").Hamt;
 pub const HashContext = @import("hamt.zig").HashContext;
