@@ -92,6 +92,14 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
             };
         }
 
+        pub fn clone(self: *Self) !Self {
+            return .{
+                .node = try self.node.borrow(),
+                .len = self.len,
+                .depth = self.depth,
+            };
+        }
+
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             self.node.release(gpa);
         }
@@ -181,13 +189,13 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
         /// Returns a new vector with the passed value at index i. If i == self.len and the depth of the trie
         /// does not need to increase, then the value is added to the end of the new collection.
         pub fn update(self: *Self, gpa: std.mem.Allocator, i: usize, value: T) !Self {
-            var clone = try self.clonePath(gpa, i);
+            var m_clone = try self.clonePath(gpa, i);
 
-            clone.tail_node.* = Node{
+            m_clone.tail_node.* = Node{
                 .kind = .{
                     .leaf = try Leaf.init(
                         gpa,
-                        try clone.leaf.getUnwrap().update(
+                        try m_clone.leaf.getUnwrap().update(
                             gpa,
                             i % width,
                             value,
@@ -195,24 +203,24 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
                     ),
                 },
             };
-            return clone.self;
+            return m_clone.self;
         }
 
         /// Appends the given value to the vector. Assumes that some tail node has capacity to hold it.
         pub fn appendAssumeCapacity(self: *Self, gpa: std.mem.Allocator, value: T) !Self {
-            var clone = try self.clonePath(gpa, self.len);
+            var m_clone = try self.clonePath(gpa, self.len);
 
-            clone.tail_node.* = Node{
+            m_clone.tail_node.* = Node{
                 .kind = .{
                     .leaf = try Leaf.init(
                         gpa,
-                        try clone.leaf.getUnwrap().append(gpa, value),
+                        try m_clone.leaf.getUnwrap().append(gpa, value),
                     ),
                 },
             };
 
-            clone.self.len += 1;
-            return clone.self;
+            m_clone.self.len += 1;
+            return m_clone.self;
         }
 
         /// Appends the given value to the vector. Increases the vector depth if necessary.
@@ -233,10 +241,10 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
         }
 
         pub fn pop(self: *Self, gpa: std.mem.Allocator) !Self {
-            var clone = try self.clonePath(gpa, self.len - 1);
+            var m_clone = try self.clonePath(gpa, self.len - 1);
 
-            const leaf = clone.leaf.getUnwrap();
-            clone.tail_node.* = Node{
+            const leaf = m_clone.leaf.getUnwrap();
+            m_clone.tail_node.* = Node{
                 .kind = .{
                     .leaf = try Leaf.init(
                         gpa,
@@ -245,8 +253,8 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
                 },
             };
 
-            clone.self.len -= 1;
-            return clone.self;
+            m_clone.self.len -= 1;
+            return m_clone.self;
         }
 
         pub fn iterator(self: Self) Iterator {
@@ -404,6 +412,10 @@ pub fn MultiPVector(comptime T: type) type {
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             self.vec.node.release(gpa);
+        }
+
+        pub fn clone(self: *Self) !Self {
+            return .{ .vec = try self.vec.clone() };
         }
 
         pub fn head(self: Self) T {

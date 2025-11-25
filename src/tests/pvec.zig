@@ -943,3 +943,76 @@ test "multi iter field slice" {
         try std.testing.expectEqual(null, iter.next());
     }
 }
+
+test "multi iter clone" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const S = struct {
+        field1: i32,
+        field2: f32,
+    };
+
+    const data_sizes = [_]usize{
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        31,
+        32,
+        33,
+        50,
+        64,
+        100,
+        159,
+        160,
+        161,
+        255,
+        256,
+        257,
+        355,
+        480,
+        1000,
+        1023,
+        2560,
+        32767,
+        32768,
+        32769,
+    };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(S, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            const val = S{
+                .field1 = rand.int(i32),
+                .field2 = rand.float(f32),
+            };
+            data[i] = val;
+        }
+
+        var old_vector = try MultiPVector(S).init(allocator, data);
+        var vector = try old_vector.clone();
+
+        old_vector.deinit(allocator);
+
+        defer vector.deinit(allocator);
+
+        for (0..data.len) |i| {
+            try std.testing.expectEqual(data[i], vector.get(i));
+        }
+    }
+}
