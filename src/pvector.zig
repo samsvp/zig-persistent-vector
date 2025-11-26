@@ -4,6 +4,10 @@ const IVector = @import("ivector.zig").IVector;
 const MultiIVector = @import("ivector.zig").MultiIVector;
 const RefCounter = @import("ref_counter.zig").RefCounter;
 
+pub fn AutoPVector(comptime T: type) type {
+    return PVector(T, IVector);
+}
+
 pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
     return struct {
         len: usize,
