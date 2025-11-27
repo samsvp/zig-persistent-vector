@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const borrow_errors = error {
+const borrow_errors = error{
     AccessFreedReference,
     BorrowOfFreedReference,
 };
@@ -35,7 +35,7 @@ pub fn RefCounter(comptime T: type) type {
                 return self.value.value;
             }
 
-            pub fn borrow(self: *Ref) !Ref {
+            pub fn borrow(self: Ref) !Ref {
                 return Ref{ .value = try _borrow(self.value) };
             }
 
@@ -60,7 +60,7 @@ pub fn RefCounter(comptime T: type) type {
             }
 
             const method = @field(U, "deinit");
-            const expected_signature = fn(*U, std.mem.Allocator) void;
+            const expected_signature = fn (*U, std.mem.Allocator) void;
             if (@TypeOf(method) != expected_signature) {
                 @compileError("deinit function must accept a self pointer and an allocator");
             }
