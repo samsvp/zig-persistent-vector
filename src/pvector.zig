@@ -375,6 +375,20 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
                 return val;
             }
 
+            pub fn nextPtr(iter: *Iterator) ?*T {
+                if (iter.index >= iter.vec.len) {
+                    return null;
+                }
+
+                if (iter.index % width == 0) {
+                    iter.leaf = iter.vec.getLeaf(iter.index).getUnwrap();
+                }
+
+                const val = &iter.leaf.get(iter.index % width);
+                iter.index += 1;
+                return val;
+            }
+
             pub fn head(iter: Iterator) ?T {
                 if (iter.index >= iter.vec.len) {
                     return null;
@@ -494,7 +508,7 @@ pub fn MultiPVector(comptime T: type) type {
                     };
                 }
 
-                pub fn next(iter: *IteratorField(field)) ?FieldType(field) {
+                fn nextItems(iter: *IteratorField(field)) ?[]FieldType(field) {
                     if (iter.index >= iter.multi_pvec.vec.len) {
                         return null;
                     }
@@ -504,7 +518,21 @@ pub fn MultiPVector(comptime T: type) type {
                         iter.items = leaf.array.items(field);
                     }
 
-                    const val = iter.items[iter.index % VecT.width];
+                    return iter.items;
+                }
+
+                pub fn next(iter: *IteratorField(field)) ?FieldType(field) {
+                    const items = iter.nextItems() orelse return null;
+
+                    const val = items[iter.index % VecT.width];
+                    iter.index += 1;
+                    return val;
+                }
+
+                pub fn nextPtr(iter: *IteratorField(field)) ?*FieldType(field) {
+                    const items = iter.nextItems() orelse return null;
+
+                    const val = &items[iter.index % VecT.width];
                     iter.index += 1;
                     return val;
                 }
@@ -539,6 +567,14 @@ pub fn MultiPVector(comptime T: type) type {
                 break :blk types;
             });
 
+            const ResultTypePtr = std.meta.Tuple(&blk: {
+                var types: [fields.len]type = undefined;
+                for (fields, 0..) |f, i| {
+                    types[i] = *FieldType(f);
+                }
+                break :blk types;
+            });
+
             const SlicesType = std.meta.Tuple(&blk: {
                 var types: [fields.len]type = undefined;
                 for (fields, 0..) |f, i| {
@@ -560,7 +596,7 @@ pub fn MultiPVector(comptime T: type) type {
                     };
                 }
 
-                pub fn next(iter: *Iterator) ?ResultType {
+                fn nextItems(iter: *Iterator) ?SlicesType {
                     if (iter.index >= iter.multi_pvec.vec.len) {
                         return null;
                     }
@@ -573,11 +609,31 @@ pub fn MultiPVector(comptime T: type) type {
                         }
                     }
 
+                    return iter.leaf_slices;
+                }
+
+                pub fn next(iter: *Iterator) ?ResultType {
+                    const leaf_slices = iter.nextItems() orelse return null;
+
                     var result: ResultType = undefined;
                     const offset = iter.index % VecT.width;
 
                     inline for (fields, 0..) |_, i| {
-                        result[i] = iter.leaf_slices[i][offset];
+                        result[i] = leaf_slices[i][offset];
+                    }
+
+                    iter.index += 1;
+                    return result;
+                }
+
+                pub fn nextPtr(iter: *Iterator) ?ResultTypePtr {
+                    const leaf_slices = iter.nextItems() orelse return null;
+
+                    var result: ResultTypePtr = undefined;
+                    const offset = iter.index % VecT.width;
+
+                    inline for (fields, 0..) |_, i| {
+                        result[i] = &leaf_slices[i][offset];
                     }
 
                     iter.index += 1;
