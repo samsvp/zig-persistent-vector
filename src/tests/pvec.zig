@@ -397,6 +397,41 @@ test "remove" {
     }
 }
 
+test "iterator" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const data_sizes = [_]usize{ 1, 2, 4, 7, 8, 9, 10, 11, 31, 32, 33, 50, 64, 100, 159, 160, 161, 255, 256, 257, 355, 480, 1000, 1023 };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(i32, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            data[i] = rand.int(i32);
+        }
+
+        var vector = try PVector(i32, IVector).init(allocator, data);
+        defer vector.deinit(allocator);
+
+        var iter = vector.iterator();
+        var i: usize = 0;
+        while (iter.nextPtr()) |v| : (i += 1) {
+            try std.testing.expect(v.* == data[i]);
+        }
+    }
+}
+
 test "multi vec backend" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer {
@@ -938,6 +973,92 @@ test "multi iter field slice" {
             const f1, const f2 = tail_iter.next().?;
             try std.testing.expectEqual(data[i].field1, f1);
             try std.testing.expectEqual(data[i].field2, f2);
+        }
+
+        try std.testing.expectEqual(null, iter.next());
+    }
+}
+
+test "multi iter field slice ptr" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) std.debug.print("WARNING: memory leaked\n", .{});
+    }
+
+    const allocator = gpa.allocator();
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
+    const S = struct {
+        field1: i32,
+        field2: f32,
+    };
+
+    const data_sizes = [_]usize{
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        31,
+        32,
+        33,
+        50,
+        64,
+        100,
+        159,
+        160,
+        161,
+        255,
+        256,
+        257,
+        355,
+        480,
+        1000,
+        1023,
+        2560,
+        32767,
+        32768,
+        32769,
+        32799,
+        32800,
+        32801,
+        32860,
+        50000,
+    };
+    for (data_sizes) |s| {
+        const data = try allocator.alloc(S, s);
+        defer allocator.free(data);
+
+        for (0..data.len) |i| {
+            const val = S{
+                .field1 = rand.int(i32),
+                .field2 = rand.float(f32),
+            };
+            data[i] = val;
+        }
+
+        var vector = try MultiPVector(S).init(allocator, data);
+        defer vector.deinit(allocator);
+
+        var iter = vector.fieldsIterator(&.{ .field1, .field2 });
+        for (0..data.len) |i| {
+            const f1, const f2 = iter.nextPtr().?;
+            try std.testing.expectEqual(data[i].field1, f1.*);
+            try std.testing.expectEqual(data[i].field2, f2.*);
+        }
+
+        var tail_iter = vector.fieldsIterator(&.{ .field1, .field2 }).tail();
+        for (1..data.len) |i| {
+            const f1, const f2 = tail_iter.nextPtr().?;
+            try std.testing.expectEqual(data[i].field1, f1.*);
+            try std.testing.expectEqual(data[i].field2, f2.*);
         }
 
         try std.testing.expectEqual(null, iter.next());

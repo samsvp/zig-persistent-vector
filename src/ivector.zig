@@ -3,7 +3,7 @@ const RefCounter = @import("ref_counter.zig").RefCounter;
 
 pub fn IVector(comptime T: type) type {
     return struct {
-        items: []const T,
+        items: []T,
 
         const Self = @This();
 
@@ -24,6 +24,10 @@ pub fn IVector(comptime T: type) type {
 
         pub fn get(self: Self, i: usize) T {
             return self.items[i];
+        }
+
+        pub fn getPtr(self: Self, i: usize) *T {
+            return &self.items[i];
         }
 
         pub fn update(self: Self, gpa: std.mem.Allocator, i: usize, val: T) !Self {

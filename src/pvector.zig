@@ -384,7 +384,7 @@ pub fn PVector(comptime T: type, comptime Vec: fn (type) type) type {
                     iter.leaf = iter.vec.getLeaf(iter.index).getUnwrap();
                 }
 
-                const val = &iter.leaf.get(iter.index % width);
+                const val = iter.leaf.getPtr(iter.index % width);
                 iter.index += 1;
                 return val;
             }
